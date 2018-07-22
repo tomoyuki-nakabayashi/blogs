@@ -62,7 +62,29 @@ Intel Processor Graphicsは、システムメモリをgraphics memoryとして�
 4GB(複数)のLocal graphics memoryは、Local Page Tableでマッピングされ、Render Engineからのみアクセスできる。
 ハードウェアアクセラレーション中の大規模なメモリアクセスは、Local graphics memoryで行われる。
 
-CPUはGPU固有のコマンドでGPUを制御する(producer-consumer model)。graphics driverはGPUコマンドをCommand Bufferへプログラムする。primary bufferとbatch bufferを含む。これは、OpenGLやDirectXといったhigh-levelのAPIに基づいている。
+CPUはGPU固有のコマンドでGPUを制御する(producer-consumer model)。graphics driverはGPUコマンドをCommand Bufferへプログラムする。primary bufferとbatch bufferを含む。これは、OpenGLやDirectXといったhigh-level APIに基づいている。その後、GPUはコマンドをフェッチして実行する。
+primary buffer (ring buffer)は、他のbatch bufferとchainしている場合がある。batch bufferは主要コマンドを運搬するのに使われる。
+
+GPU-intensiveな3D負荷は、次の４つのインタフェースの利用に分類できる。
+1. the Frame Buffer,
+2. the Command Buffer,
+3. the GPU Page Table Entries (PTEs), which carry the GPU page tables, and
+4. the I/O registers, including Memory-Mapped I/O (MMIO) registers, Port I/O (PIO) registers, and PCI configuration space registers for internal state.
+
+ロード時のFrame Bufferへのアクセス（CPUからの頂点と画素の書き込み)と、Run-timeのCommand Bufferへのアクセス(CPUからのGPU制御)頻度が支配的で、他の2つはそれほどでもない。
+
+### High Level Architecture
+
+guest VMは、リソース分割(後述)により、Frame BufferとCommand Bufferに直接アクセスできる。
+特権リソース(I/OレジスタやPTE)は、Hypervisorにトラップされて、SOSのGVTデバイスモデルに転送される。
+デバイスモデルはi915 interfaceを利用して、物理GPUにアクセスする。
+
+デバイスモデルは、VM間で物理GPUのタイムスロットを共有するために、GPUスケジューラを実装している。
+**GPUスケジューラの必要性がまだよく分かっていない。**
+
+ACRN移植のために、ACRN-DM互換なMPT (Mediated Pass-Through) interfaceを実装した。
+
+### Key Techniques
 
 ## TCM
 
