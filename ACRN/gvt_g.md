@@ -83,8 +83,18 @@ guest VMは、リソース分割(後述)により、Frame BufferとCommand Buffe
 **GPUスケジューラの必要性がまだよく分かっていない。**
 
 ACRN移植のために、ACRN-DM互換なMPT (Mediated Pass-Through) interfaceを実装した。
+GVTデバイスモデルが晒しているsysfs経由でやり取りする。
 
 ### Key Techniques
+
+vGPUデバイスモデルのインスタンスが、guestからのGPUリクエストの受理と、guestへの結果返答を行う。
+vGPUデバイスモデルは、MMIO, interrupt, displayを仮想化する。
+内部で、command scanやshadow、スケジューリングをして、SOS i915ドライバにディスパッチする。
+
+#### MMIO Virtualization
+
+* GTTMMADR BAR
+* GMADR BAR
 
 ## TCM
 
