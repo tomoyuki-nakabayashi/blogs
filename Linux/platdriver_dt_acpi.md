@@ -18,20 +18,60 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 
 ここでGPIOを例にすると、GPIOはLEDはに使われたり、割り込みに使われたり、何らかのデバイスの入出力に使われたりします。
 しかし、Linux kernelとしては、GPIOがLEDなのか割り込み線なのか何らかのデバイスの入出力なのか、は知りようがないわけです。
+そのようなauto-negotiation processは存在していません。
 
 そこで、GPIOは(memory mappedの場合)、ここのアドレスにあって、こういうデバイスだから、このdriverで動かしてね、ということをLinux kernelに伝える仕組みの登場です。
 
-1. platform driver
+1. platform driverのplatform data
 2. device tree
 3. ACPI(のDSDT)
 
+## Plug and Play
+
+USBやPCI Expressなど、挿せばkernelに認識されるデバイスがあります。
+それに対して、non-discoverableなplatform deviceが存在します(USBデバイス自体はPnPでもコントローラはnon-discoverableなplatform deviceです)。
+これは、SoCやボードに組み込まれており、抜き差しできないデバイスです。
+
 ## Platform driver
+
+### Platform drivers
 
 現在は非推奨の方法です。
 やむを得ず使わざるをえない場合もあります。
 
 [omap1 serial](https://github.com/torvalds/linux/blob/master/arch/arm/mach-omap1/serial.c)
 
+platform deviceを利用するためには、次の手順を踏む必要があります。
+
+1. platform driverを登録する
+2. deviceとdeviceが利用するリソースを登録する
+
+### probe
+
+deviceが登録された際、呼び出されるdriverの関数です。
+deviceがどのdriverと紐付いているか、は`matching`という仕組みがあり、driverの名前でmatchするdriverを探します。
+
+platform driverを登録するためには、init()ないで、platform_driver_register()を使います。
+
+### Platform devices
+
+#### Resources
+
+start/end, nameで定義可能なデータを登録する。
+
+```c
+#define IORESOUCE_IO 0x00000100  /* PCI/ISA I/O ports */
+```
+
+probe()で扱うのが良いです。
+platform_get_resource()で取り出します。
+
+### Platform data
+
+platform_get_platdata()で取り出す。
+
 ## device tree
 
+platform driverは一度修正すると、kernelを再度ビルドする必要があります。
+また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
 乱立するplatform driverの惨状に業を煮やしたLinusにより、device treeが開発されることになりました。
