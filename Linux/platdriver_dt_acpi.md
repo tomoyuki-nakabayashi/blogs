@@ -70,8 +70,37 @@ platform_get_resource()で取り出します。
 
 platform_get_platdata()で取り出す。
 
+### DeviceとDriverのマッチング
+
+DeviceとDriverのひも付けの仕組みです。文字列でマッチングします。
+例えば、GPIOなら、GPIO用のDriverのリストがあり、Deviceが登録された時点で、マッチングするDriverがあるかどうかを調べる。
+Driverがロードされていない場合このタイミングでDriverがロードされる。
+その後、probe()が実行される。
+
+device treeだと`compatible`、platform deviceだと、`type`と`name`でマッチングする。
+
+```c
+static int platform_match(struct device *dev, struct device_driver *drv) {
+    struct platform_device *pdev = to_platform_device(dev);
+    struct platform_driver *pdrv = to_platform_driver(drv);
+
+    /* OF style match, first */
+    if (of_driver_match_device(dev, drv))
+        return 1;
+    
+    /* Then ACPI style match */
+    if (acpi_driver_match_device(dev, drv))
+        return 1;
+    
+    if (pdrv->id_table)
+        
+}
+```
+
 ## device tree
 
 platform driverは一度修正すると、kernelを再度ビルドする必要があります。
 また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
 乱立するplatform driverの惨状に業を煮やしたLinusにより、device treeが開発されることになりました。
+
+Open Firmware (OF) matching.
