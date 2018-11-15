@@ -104,3 +104,38 @@ platform driverは一度修正すると、kernelを再度ビルドする必要�
 乱立するplatform driverの惨状に業を煮やしたLinusにより、device treeが開発されることになりました。
 
 Open Firmware (OF) matching.
+
+## ACPI DSDT
+
+例えば、device treeではなくACPIを利用するLinux kernelのコンフィギュレーションは次のようになる。
+
+```
+CONFIG_GPIOLIB=y
+CONFIG_GPIO_ACPI=y
+```
+
+https://www.kernel.org/doc/Documentation/acpi/enumeration.txt
+
+> In ACPI, the device identification object called _CID (Compatible ID) is used to
+list the IDs of devices the given one is compatible with, but those IDs must
+belong to one of the namespaces prescribed by the ACPI specification (see
+Section 6.1.2 of ACPI 6.0 for details) and the DT namespace is not one of them.
+
+```c:device.h
+struct device_driver {
+	const char		*name;
+	struct bus_type		*bus;
+...
+	const struct of_device_id	*of_match_table;
+	const struct acpi_device_id	*acpi_match_table;
+...
+	const struct dev_pm_ops *pm;
+...
+};
+```
+
+https://wiki.osdev.org/ACPI
+https://wiki.osdev.org/AML
+https://wiki.osdev.org/DSDT
+
+https://github.com/westeri/meta-acpi/
