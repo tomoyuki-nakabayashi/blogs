@@ -125,6 +125,11 @@ static struct platform_driver my_platform_driver = {
 };
 ```
 
+Linux driverの初期化の流れは、去年のアドベントカレンダーの下記記事に解説があります。
+[Linuxのドライバの初期化が呼ばれる流れ](https://qiita.com/rarul/items/308d4eef138b511aa233)
+
+### Platform deviceの登録
+
 `my_platform_driver`はkernelに登録済みのため、次のようなplatform deviceを登録すると、my_platform_driver_probe関数が呼び出されます。
 
 ```c
@@ -137,25 +142,73 @@ platform_device_register(&my_platform_device);
 
 この`platform_device`には、どのようなデバイスが搭載されているか、というデータを定義することができます。
 
-Linux driverの初期化の流れは、去年のアドベントカレンダーの下記記事に解説があります。
-[Linuxのドライバの初期化が呼ばれる流れ](https://qiita.com/rarul/items/308d4eef138b511aa233)
-
-### Platform devices
-
-#### Resources
-
-start/end, nameで定義可能なデータを登録する。
-
-```c
-#define IORESOUCE_IO 0x00000100  /* PCI/ISA I/O ports */
+```c:include/linux/platform_device.h
+struct platform_device {
+    const char  *name;
+    struct device   dev;
+}
 ```
 
-probe()で扱うのが良いです。
-platform_get_resource()で取り出します。
+ここで重要なのが、`struct device`の`platform_data`メンバです。
 
-### Platform data
+```c:include/linux/device.h
+/**
+ * struct device - The basic device structure
+...
+ * @platform_data: Platform data specific to the device.
+ *     Example: For devices on custom boards, as typical of embedded
+ *     and SOC based hardware, Linux often uses platform_data to point
+ *     to board-specific structures describing devices and how they
+ *     are wired.  That can include what ports are available, chip
+ *     variants, which GPIO pins act in what additional roles, and so
+ *     on.  This shrinks the "Board Support Packages" (BSPs) and
+ *     minimizes board-specific #ifdefs in drivers.
+...
+struct device {
+    struct device       *parent;
+...
+    void        *platform_data; /* Platform specific data, device
+                       core doesn't touch it */
+...
+};
+```
 
-platform_get_platdata()で取り出す。
+コメントにある通り、`platform_data`には、カスタムボード固有のデバイス構造を記述します。
+例えば、どのGPIOが、なんの役割を担っているか、ということを指定していきます。
+
+さて、`platform_data`の型は`void*`です。これは、好きな構造体を定義して、好きに使って良い、ということです。
+`platform_device`と`platform_driver`は強い結合があり、`platform_driver`は、この`platform_data`に定義されたデバイス構造データを利用して、デバイスを初期化していきます。
+
+ただ、全部が全部独自でデバイス構造を用意するわけではなく、一般的なデバイスについては、データ構造が用意されています。
+例えば、SPIデバイスについては、`spi_board_info`という構造体が用意されています。
+
+```c
+static struct spi_board_info spidev_board_info[] = {
+    {
+        .modalias = "spidev",
+        .max_speed_hz = 2000000,
+        .bus_num = 1,
+        .chip_select = 0,
+        .mode = SPI_MODE_0,
+    },
+};
+
+spi_register_board_info(&spidev_board_info, 1);
+```
+
+この`spidev_board_info`のような実態を定義し、`spi_register_board_info`でdeviceを登録することで、対応するSPIデバイスのdriverと紐付けることができます。
+上記の例では、`.modalias`で指定されている`spidev`というdriverと紐付けがされます。
+`spidev_board_info`が登録された時点で、kernelは、spidev driverのprobe関数を呼び出します。
+probe関数呼び出し時、kernelは`spi_device`というデータを作成し、spidev driver probeの引数として渡します。
+これは、`.max_speed_hz`などのメンバから作成したSPIデバイスのパラメータ一式となります。
+spidev driverのprobe関数では、spi_deviceのデータを参照して、デバイスの初期化を実行します。
+
+まとめると、
+
+1. platform driverを登録する
+2. platform deviceを登録する
+3. 登録されたplatform deviceとplatform driverのマッチングを行い、対応するdriverのprobeを呼び出す
+4. probe内では、platform deviceで定義されたパラメータデータを利用して、デバイスの初期化を実施する
 
 ### DeviceとDriverのマッチング
 
@@ -188,7 +241,7 @@ static int platform_match(struct device *dev, struct device_driver *drv) {
 
 platform driverは一度修正すると、kernelを再度ビルドする必要があります。
 また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
-乱立するplatform driverの惨状に業を煮やしたLinusにより、device treeが開発されることになりました。
+特定のボードの設定は、kernelに含まれるべきではない、という動機から、device treeが開発されることになりました。
 
 Open Firmware (OF) matching.
 
