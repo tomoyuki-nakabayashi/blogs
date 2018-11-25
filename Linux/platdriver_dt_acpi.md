@@ -130,6 +130,8 @@ Linux driverの初期化の流れは、去年のアドベントカレンダー�
 
 ### Platform deviceの登録
 
+#### platform device
+
 `my_platform_driver`はkernelに登録済みのため、次のようなplatform deviceを登録すると、my_platform_driver_probe関数が呼び出されます。
 
 ```c
@@ -179,11 +181,14 @@ struct device {
 さて、`platform_data`の型は`void*`です。これは、好きな構造体を定義して、好きに使って良い、ということです。
 `platform_device`と`platform_driver`は強い結合があり、`platform_driver`は、この`platform_data`に定義されたデバイス構造データを利用して、デバイスを初期化していきます。
 
-ただ、全部が全部独自でデバイス構造を用意するわけではなく、一般的なデバイスについては、データ構造が用意されています。
-例えば、SPIデバイスについては、`spi_board_info`という構造体が用意されています。
+#### Specific platform device
+
+全部が全部独自でデバイス構造を用意するわけではなく、一般的なデバイスについては、データ構造が用意されています。
+例えば、SPIデバイスについては、`spi_board_info`という構造体が用意されています。この構造体には、多くのSPIデバイスが共通して持つパラメータが定義されています。
+例えば、次のように使います。
 
 ```c
-static struct spi_board_info spidev_board_info[] = {
+static struct spi_board_info spidev_on_my_platform[] = {
     {
         .modalias = "spidev",
         .max_speed_hz = 2000000,
@@ -193,15 +198,36 @@ static struct spi_board_info spidev_board_info[] = {
     },
 };
 
-spi_register_board_info(&spidev_board_info, 1);
+spi_register_board_info(&spidev_on_my_platform, 1);
 ```
 
-この`spidev_board_info`のような実態を定義し、`spi_register_board_info`でdeviceを登録することで、対応するSPIデバイスのdriverと紐付けることができます。
+この`spidev_on_my_platform`のような実体を定義し、`spi_register_board_info`でdeviceを登録することで、対応するSPIデバイスのdriverと紐付けることができます。
 上記の例では、`.modalias`で指定されている`spidev`というdriverと紐付けがされます。
-`spidev_board_info`が登録された時点で、kernelは、spidev driverのprobe関数を呼び出します。
+`spidev_on_my_platform`が登録された時点で、kernelは、spidev driverのprobe関数を呼び出します。
 probe関数呼び出し時、kernelは`spi_device`というデータを作成し、spidev driver probeの引数として渡します。
 これは、`.max_speed_hz`などのメンバから作成したSPIデバイスのパラメータ一式となります。
 spidev driverのprobe関数では、spi_deviceのデータを参照して、デバイスの初期化を実行します。
+
+このような共通のデータ構造を使って、SPIデバイスは、各driverのprobe関数で、デバイスを初期化します。
+しかし、多くのSPIデバイスでは、driverのprobe内で、用意されたメンバ以外のデータが必要になります。
+そのために、`spi_board_info`にも、`platform_data`メンバが用意されています。
+
+```c:include/linux/spi/spi.h
+/**
+ * struct spi_board_info - board-specific template for a SPI device
+ * @modalias: Initializes spi_device.modalias; identifies the driver.
+ * @platform_data: Initializes spi_device.platform_data; the particular
+ *	data stored there is driver-specific.
+...
+ */
+struct spi_board_info {
+	char		modalias[SPI_NAME_SIZE];
+	const void	*platform_data;
+...
+}
+```
+
+共通のパラメータだけでは不足する場合には、独自のデータ構造体を定義し、driverで取得して利用します。
 
 まとめると、
 
@@ -210,38 +236,88 @@ spidev driverのprobe関数では、spi_deviceのデータを参照して、デ�
 3. 登録されたplatform deviceとplatform driverのマッチングを行い、対応するdriverのprobeを呼び出す
 4. probe内では、platform deviceで定義されたパラメータデータを利用して、デバイスの初期化を実施する
 
-### DeviceとDriverのマッチング
-
-DeviceとDriverのひも付けの仕組みです。文字列でマッチングします。
-例えば、GPIOなら、GPIO用のDriverのリストがあり、Deviceが登録された時点で、マッチングするDriverがあるかどうかを調べる。
-Driverがロードされていない場合このタイミングでDriverがロードされる。
-その後、probe()が実行される。
-
-device treeだと`compatible`、platform deviceだと、`type`と`name`でマッチングする。
-
-```c
-static int platform_match(struct device *dev, struct device_driver *drv) {
-    struct platform_device *pdev = to_platform_device(dev);
-    struct platform_driver *pdrv = to_platform_driver(drv);
-
-    /* OF style match, first */
-    if (of_driver_match_device(dev, drv))
-        return 1;
-    
-    /* Then ACPI style match */
-    if (acpi_driver_match_device(dev, drv))
-        return 1;
-    
-    if (pdrv->id_table)
-        
-}
-```
-
 ## device tree
 
 platform driverは一度修正すると、kernelを再度ビルドする必要があります。
 また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
-特定のボードの設定は、kernelに含まれるべきではない、という動機から、device treeが開発されることになりました。
+特定ボードの設定は、kernelに含まれるべきではない、という思想から、**device tree** が開発されることになりました。
+
+device treeは、プラットフォーム上のハードウェアは、木構造に似た形式で記述します。
+各デバイスは、ノードと呼ばれ、必要なパラメータやデータは、`property`という形で表現します。
+device treeを修正した場合、device treeを再コンパイルするだけで済み、kernelは再ビルドする必要がありません。
+
+device treeについては、下記記事にとても良くまとめられています。
+
+[Device Tree についてのまとめ](https://qiita.com/koara-local/items/ed99a7b96a0ca252fc4e)
+
+現在もまとまった日本語情報はないと思います。本記事では包括的、または、体系的な説明はしません(できません)。例をいくつか挙げ、それがどのような意味なのか、を解説していきます。
+
+英語では、[Linux Device Drivers Development](https://www.amazon.co.jp/Linux-Device-Drivers-Development-Madieu/dp/1785280007)に解説があります。
+私はこの本を購入してだいぶ救われました(なお、個人差があります)。
+本記事を書く上でもかなり参考にしています。(誤植は多いですが)device treeに対応したdevice driverについて解説のある良い本ですので、device treeやdevice driver開発で悩まれている方は、購入を検討してみて下さい。
+
+そうは言っても、最終的には、各driverのdevice tree bindingsを参照しながら、必要ならdriver自体のコードを解析しながら利用することになります。
+bindings一覧は、`Documentation/devicetree/bingins`にまとめられています。
+各ベンダー固有のforkにしか存在しないbindingsドキュメントもあるため、注意が必要です。
+
+[device tree bindings](https://github.com/OpenChannelSSD/linux/tree/master/Documentation/devicetree/bindings)を覗いてみると、`board`, `gpio`, `leds`, `serial`, `spi`などデバイス種別ごとのディレクトリが存在します。
+試しに、`leds/leds-gpio.txt`を見てみます。これは、GPIOで制御可能なLEDデバイスのノードを記述するための説明です。
+propertyには、必須(shold/required)なものと、optionalなものがあります。下記の例では、`compatible`と`gpios`が必須のpropertyで、`default-state`はoptionalなpropertyです。
+
+
+```:leds/leds-gpio.txt抜粋
+LEDs connected to GPIO lines
+
+Required properties:
+- compatible : should be "gpio-leds".
+
+LED sub-node properties:
+- gpios :  Should specify the LED's GPIO, see "gpios property" in
+  Documentation/devicetree/bindings/gpio/gpio.txt.  Active low LEDs should be
+  indicated using flags in the GPIO specifier.
+
+- default-state:  (optional) The initial state of the LED.
+  see Documentation/devicetree/bindings/leds/common.txt
+  
+Examples:
+
+run-control {
+	compatible = "gpio-leds";
+	red {
+		gpios = <&mpc8572 6 GPIO_ACTIVE_HIGH>;
+		default-state = "off";
+	};
+	green {
+		gpios = <&mpc8572 7 GPIO_ACTIVE_HIGH>;
+		default-state = "on";
+	};
+};
+```
+
+`compatible`は、deviceとdriverを紐付けるためのpropertyです。`leds-gpio` driverを見るとわかりやすいです。
+`leds-gpio` driverは`platform_driver`として登録され、`gpio-leds`という文字列が指定されたデバイスと紐付けされます。
+
+[leds-gpio.c](https://github.com/OpenChannelSSD/linux/blob/master/drivers/leds/leds-gpio.c)
+
+```c:/drivers/leds/leds-gpio.c
+static const struct of_device_id of_gpio_leds_match[] = {
+	{ .compatible = "gpio-leds", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, of_gpio_leds_match);
+
+static struct platform_driver gpio_led_driver = {
+	.probe		= gpio_led_probe,
+	.shutdown	= gpio_led_shutdown,
+	.driver		= {
+		.name	= "leds-gpio",
+		.of_match_table = of_gpio_leds_match,
+	},
+};
+module_platform_driver(gpio_led_driver);
+```
+
+https://dri.freedesktop.org/docs/drm/driver-api/gpio/board.html
 
 Open Firmware (OF) matching.
 
