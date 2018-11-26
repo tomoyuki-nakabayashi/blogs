@@ -32,6 +32,7 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 3. ACPI(のDSDT)
 
 本記事では、それぞれの方法について、簡単に紹介します。
+包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIO)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
 
 ## 余談 Plug and Play
 
@@ -47,6 +48,9 @@ USBやPCI Expressなど、挿せばLinux kernelに認識されるデバイスが
 
 大雑把にいうと、platform driverをLinux kernel起動時にロードさせて、プラットフォーム上に存在するplatform deviceを登録します。
 これにより、Linux kernelはプラットフォーム上にどのようなデバイスが搭載されているのかを認識することができます。
+
+[x86 platform](https://elinux.org/images/e/ec/Hart-x86-platform.pdf)
+[minnowboard.c](https://kernel.googlesource.com/pub/scm/linux/kernel/git/horms/renesas-backport/+/v3.10.28-ltsi-rc1/drivers/platform/x86/minnowboard.c)
 
 ### platform drivers
 
