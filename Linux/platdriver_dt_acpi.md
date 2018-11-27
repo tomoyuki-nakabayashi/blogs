@@ -299,7 +299,7 @@ run-control {
 ```
 
 `compatible`は、deviceとdriverを紐付けるためのpropertyです。`leds-gpio` driverを見るとわかりやすいです。
-`leds-gpio` driverは`platform_driver`として登録され、`gpio-leds`という文字列が指定されたデバイスと紐付けされます。
+`leds-gpio` driverは`platform_driver`として登録され、compatibleに`gpio-leds`という文字列が指定されたデバイスと紐付けされます。
 
 [leds-gpio.c](https://github.com/OpenChannelSSD/linux/blob/master/drivers/leds/leds-gpio.c)
 
@@ -320,6 +320,9 @@ static struct platform_driver gpio_led_driver = {
 };
 module_platform_driver(gpio_led_driver);
 ```
+
+上記のデバイスツリーの例では、`run-control`ノードに、redとgreenという2つの`gpio-leds` compatibleなデバイスを定義しています。
+結果として、2つのGPIOは、`leds-gpio` driverで制御されます。
 
 https://dri.freedesktop.org/docs/drm/driver-api/gpio/board.html
 
