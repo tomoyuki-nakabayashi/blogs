@@ -41,6 +41,33 @@ USBやPCI Expressなど、挿せばLinux kernelに認識されるデバイスが
 例えば、USBメモリなどのUSB機器はPnPでも、USBコントローラはnon-discoverableなデバイスです。
 本記事では、non-discoverableなデバイスを組み込む方法のみを説明します。
 
+## 共通事項および俯瞰
+
+3つの方法で共通となることについてまとめます。
+
+プラットフォームのデバイス構成を`個々の方法で`記述する。
+
+1. Device driverをLinux kernelに登録する
+2. platform deviceに名前がマッチングがdriverをbindされる
+3. bindされたdriverのprobe関数が呼ばれる
+
+https://stackoverflow.com/questions/15610570/what-is-the-difference-between-a-linux-platform-driver-and-normal-device-driver
+
+3つの方法では、それぞれ、プラットフォーム上のデバイス構成を記述する方法が異なります。  
+また、Linux kernelとの関係性も違ってきます。
+
+#### Platform driver
+
+driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。
+
+#### device tree
+
+device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは別のblobを形成します。
+
+#### ACPI
+
+ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。
+
 ## platform driver & platform device
 
 現在は非推奨の方法です。
