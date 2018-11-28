@@ -62,11 +62,12 @@ driverにプラットフォーム上のデバイス構成を記述します。dr
 
 #### device tree
 
-device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは別のblobを形成します。
+device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは独立したblobを形成します。
 
 #### ACPI
 
-ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。
+ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。  
+私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
 
 ## platform driver & platform device
 
