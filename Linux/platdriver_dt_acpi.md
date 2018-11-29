@@ -1,4 +1,4 @@
-# Platform driver, device tree, ACPI
+# 組込みLinuxでプラットフォーム上のデバイスを記述する3つの方法()
 
 この記事は[Linux Advent Calendar 2018](https://qiita.com/advent-calendar/2018/linux)の11日目の記事として書かれました。
 
@@ -6,10 +6,10 @@
 
 組込みLinuxの醍醐味は、ペリフェラルデバイスのカスタマイズだと考えています。
 新しく取り付けられたデバイスを、ユーザーランドから利用可能にするエンジニアリングは、困難を伴う場合が多くあります。
-様々な困難をくぐり抜け、デバイスが動作した瞬間の喜びだけが、組込みLinux屋さんの救いです (なお、個人差)。
+様々な困難をくぐり抜け、デバイスが動作した瞬間の喜びだけが、組込みLinux屋さんの救いです (なお、個人差があります)。
 
 世の中にはたくさんの組込みLinuxデバイスがあります。
-それらのデバイスは、まず、SoCベンダーがリファレンスボードを作ります。TIが作っていたりNXPが作っていたりIntelが作っていたりするわけです。
+それらのデバイスは、多くの場合、まずSoCベンダーなどがリファレンスボードを作ります。TIが作っていたりNXPが作っていたりIntelが作っていたりするわけです。
 それらの、リファレンスボードを、家電メーカーや車載機器メーカーが自社製品向けにカスタマイズして、独自の組込みLinuxプラットフォームを構築します。
 
 まず、SoCベンダーが違えば、どのようなペリフェラルデバイスが何個搭載されているか、や、同種ペリフェラルデバイスでもメーカーや型番が違ってきます。
@@ -27,49 +27,57 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 
 このような目的で利用されている機能は、次の3つがあります。
 
-1. platform driver/platform device
+1. board-specific platform device driver
 2. device tree
 3. ACPI(のDSDT)
 
 本記事では、それぞれの方法について、簡単に紹介します。
 包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIO)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
 
-## 余談 Plug and Play
+## 想定読者
 
-USBやPCI Expressなど、挿せばLinux kernelに認識されるデバイスがあります。
-それに対して、non-discoverableなプラットフォーム組込みのデバイスが存在します。
-例えば、USBメモリなどのUSB機器はPnPでも、USBコントローラはnon-discoverableなデバイスです。
-本記事では、non-discoverableなデバイスを組み込む方法のみを説明します。
+組込みLinuxに興味がある方を想定しています。
+
+## 用語定義
+
+本記事内で使用する用語について定義します。
+
+| 用語 | 定義 |
+| --- | --- |
+| platform device | non-discoverableなデバイスで、本記事内で対象とするデバイスです。 |
+| platform driver | platform device用のdevice driverです。 |
+| GPIO | 汎用入出力ピンです。[wikipedia GPIO](https://ja.wikipedia.org/wiki/GPIO)。ソフトウェアで入出力を切り替え可能で、入力ピンとしても出力ピンとしても利用できます。 |
 
 ## 共通事項および俯瞰
 
 3つの方法で共通となることについてまとめます。
 
-プラットフォームのデバイス構成を`個々の方法で`記述する。
+いずれの方法にしても、プラットフォーム上のデバイス構成を`何らかの方法で`記述する必要があります。
+そのplatform device記述が存在した上で、次のようにデバイスの初期化が実行されます。
 
-1. Device driverをLinux kernelに登録する
-2. platform deviceに名前がマッチングがdriverをbindされる
-3. bindされたdriverのprobe関数が呼ばれる
-
-https://stackoverflow.com/questions/15610570/what-is-the-difference-between-a-linux-platform-driver-and-normal-device-driver
+1. platform driverをkernelに登録する
+2. platform deviceに対し、対応するdriverがbindされる
+3. bindされたdriverのprobe関数が呼ばれ、デバイスの初期化を行う
 
 3つの方法では、それぞれ、プラットフォーム上のデバイス構成を記述する方法が異なります。  
 また、Linux kernelとの関係性も違ってきます。
 
-#### Platform driver
+### board-specific platform device driver
 
 driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。
 
-#### device tree
+### device tree
 
 device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは独立したblobを形成します。
 
-#### ACPI
+### ACPI
 
 ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。  
 私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
 
-## platform driver & platform device
+それでは、3つの
+
+## board-specific platform device driver
 
 現在は非推奨の方法です。
 やむを得ず使わざるをえない場合もあります。
@@ -358,12 +366,14 @@ Open Firmware (OF) matching.
 
 ## ACPI DSDT
 
-例えば、device treeではなくACPIを利用するLinux kernelのコンフィギュレーションは次のようになる。
+例えば、device treeではなくACPIを利用するLinux kernelのコンフィギュレーションは次のようになります (GPIOの場合)。
 
 ```
 CONFIG_GPIOLIB=y
 CONFIG_GPIO_ACPI=y
 ```
+
+GPIOLIBは、device tree、ACPI両方に対応しており、マクロによってどちらを利用するか、が決まります。
 
 https://www.kernel.org/doc/Documentation/acpi/enumeration.txt
 
