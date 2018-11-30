@@ -397,16 +397,166 @@ Open Firmware (OF) matching.
 
 ## ACPI DSDT
 
-例えば、device treeではなくACPIを利用するLinux kernelのコンフィギュレーションは次のようになります (GPIOの場合)。
+http://www.uefi.org/sites/default/files/resources/ACPI_6_2.pdf
+
+ACPI自体は規格化されているため、仕様書は存在するわけです
+しかしながら、組込み系の周辺ペリフェラルを記述するための例は乏しい状況です。
+
+Yoctoのレイヤとして、下記のmeta-acpiが公開されています。
+
+[meta-acpi](https://github.com/westeri/meta-acpi)
+
+こちらにあるsampleを見ながら、理解を進めていきましょう。
+`recipes-bsp/acip-tables/samples/minnowboard`に、`leds.asl`と`buttons.asl`というファイルがあります。
+`leds.asl`がGPIOを使ったLEDのようなので、これを見ていきましょう。
+
+ちなみに、筆者自身もACPIでのdevice定義があまりわかっていません。解説されていない部分は、わかってないんだなぁ、と思ってスルーするか、むしろコメントなどで教えて下さい。
+
+```
+DefinitionBlock ("leds.aml", "SSDT", 5, "", "LEDS", 1)
+{
+    External (_SB_.PCI0.LPC, DeviceObj)
+
+    Scope (\_SB.PCI0.LPC)
+    {
+        Device (LEDS)
+        {
+            Name (_HID, "PRP0001")
+            Name (_DDN, "GPIO LEDs device")
+
+            Name (_CRS, ResourceTemplate () {
+                GpioIo (
+                    Exclusive,                  // Not shared
+                    PullNone,                   // No need for pulls
+                    0,                          // Debounce timeout
+                    0,                          // Drive strength
+                    IoRestrictionOutputOnly,    // Only used as output
+                    "\\_SB.PCI0.LPC",           // GPIO controller
+                    0)                          // Must be 0
+                {
+                    10,                         // E6XX_GPIO_SUS5
+                    11,                         // E6XX_GPIO_SUS6
+                }
+            })
+
+            Name (_DSD, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"compatible", "gpio-leds"},
+                },
+                ToUUID("dbb8e3e6-5886-4ba6-8795-1319f52a966b"),
+                Package () {
+                    Package () {"led-0", "LED0"},
+                    Package () {"led-1", "LED1"},
+                }
+            })
+
+            /*
+             * For more information about these bindings see:
+             * Documentation/devicetree/bindings/leds/leds-gpio.txt and
+             * Documentation/acpi/gpio-properties.txt.
+             */
+            Name (LED0, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"label", "heartbeat"},
+                    Package () {"gpios", Package () {^LEDS, 0, 0, 0}},
+                    Package () {"linux,default-state", "off"},
+                    Package () {"linux,default-trigger", "heartbeat"},
+                    Package () {"linux,retain-state-suspended", 1},
+                }
+            })
+
+            Name (LED1, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"label", "sd-card"},
+                    Package () {"gpios", Package () {^LEDS, 0, 1, 0}},
+                    Package () {"linux,default-state", "off"},
+                    Package () {"linux,default-trigger", "mmc0"},
+                    Package () {"linux,retain-state-suspended", 1},
+                }
+            })
+        }
+    }
+}
+```
+
+device treeと比較すると、随分大げさに見えます。
+これは骨が折れそうですが、1つずつ見ていきましょう。
+
+device treeと共通する点としては、deviceをツリー上に表現する、ということです。
+
+```
+    Scope (\_SB.PCI0.LPC)
+    {
+        Device (LEDS)
+        {
+```
+
+`_SB`はSystem Busを意味するようです。最も上位のバスだと認識しておけば良さそうです。
+`PCI0`はそのまま、PCIバスです。
+`LPC`は[Low Pin Count](https://ja.wikipedia.org/wiki/Low_Pin_Count)でしょうか？自信がありません。
+
+いずれにしても、LPCの下に、`LEDS`というラベルのデバイスを定義しています。
+
+次に行きましょう。
+
+```
+            Name (_HID, "PRP0001")
+            Name (_DDN, "GPIO LEDs device")
+```
+
+_HIDは、Hardware IDです。
+どうやら、`RPR0001`は特殊なIDであり、device tree compatibleなdevice識別子とのことです。
+https://patchwork.kernel.org/patch/6593351/
+結局、device treeの仕組みに頼るのかい！と思いながら先に進みます。
+
+_DDNは、Dos Device Nameだそうです。
+さらに読み進めます。
+
+`GpioIo()`は、`Operator`と呼ばれるもののようです。
+IO Resource Descriptor Macro、だそうです。
+
+```
+            Name (_CRS, ResourceTemplate () {
+                GpioIo (
+                    Exclusive,                  // Not shared
+                    PullNone,                   // No need for pulls
+                    0,                          // Debounce timeout
+                    0,                          // Drive strength
+                    IoRestrictionOutputOnly,    // Only used as output
+                    "\\_SB.PCI0.LPC",           // GPIO controller
+                    0)                          // Must be 0
+                {
+                    10,                         // E6XX_GPIO_SUS5
+                    11,                         // E6XX_GPIO_SUS6
+                }
+            })
+```
+
+```
+GpioIo (Shared, PinConfig, DebounceTimeout, DriveStrength, IORestriction, ResourceSource,
+ResourceSourceIndex, ResourceUsage, DescriptorName, VendorData) {PinList}
+```
+
+https://wiki.osdev.org/ACPI
+https://wiki.osdev.org/AML
+https://wiki.osdev.org/DSDT
+
+## device treeとACPIの使い分け
+
+例えば、ACPIを利用するLinux kernelのコンフィギュレーションは次のようになります (GPIOの場合)。
 
 ```
 CONFIG_GPIOLIB=y
 CONFIG_GPIO_ACPI=y
 ```
 
-GPIOLIBは、device tree、ACPI両方に対応しており、マクロによってどちらを利用するか、が決まります。
+device driver構造体は、device tree、ACPI両方に対応しています。
+多くのdriverは、device treeのみ対応していますが、device tree、ACPI両方に対応しているdriverも存在しています。そのようなdriverは、両方のmatch_tableを定義してます。
 
-https://www.kernel.org/doc/Documentation/acpi/enumeration.txt
+[spi-pxa2xx](https://github.com/torvalds/linux/blob/master/drivers/spi/spi-pxa2xx.c)
 
 > In ACPI, the device identification object called _CID (Compatible ID) is used to
 list the IDs of devices the given one is compatible with, but those IDs must
@@ -426,11 +576,26 @@ struct device_driver {
 };
 ```
 
-https://wiki.osdev.org/ACPI
-https://wiki.osdev.org/AML
-https://wiki.osdev.org/DSDT
+GPIOくらい一般的なdriverだと、device treeとACPI両方に対応しています。
+例えば、下のような実装になっています。
 
-https://github.com/westeri/meta-acpi/
+```c:drivers/gpio/gpiolib.c
+struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
+					       const char *con_id,
+					       unsigned int idx,
+					       enum gpiod_flags flags)
+{
+...
+		/* Using device tree? */
+		if (IS_ENABLED(CONFIG_OF) && dev->of_node) {
+			dev_dbg(dev, "using device tree for GPIO lookup\n");
+			desc = of_find_gpio(dev, con_id, idx, &lookupflags);
+		} else if (ACPI_COMPANION(dev)) {
+			dev_dbg(dev, "using ACPI for GPIO lookup\n");
+			desc = acpi_find_gpio(dev, con_id, idx, &flags, &lookupflags);
+		}
+...
+```
 
 ## 参考
 
