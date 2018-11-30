@@ -64,45 +64,75 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 
 ### board-specific platform device driver
 
-driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。
+driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。  
+正式にはなんと呼べば良いのか、よくわかりません。過去のやり方で、現在は非推奨です。
 
 ### device tree
 
-device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは独立したblobを形成します。
+device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは独立したblobを形成します。  
+組込みLinuxで用いられる多くのdriverが対応しています。
 
 ### ACPI
 
 ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。  
-私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
+組込みLinuxで用いられるdriverで対応しているものは一部(という印象)です。私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
 
-それでは、3つの
+
+それでは、3つの方法について、個別に見ていきましょう。
 
 ## board-specific platform device driver
 
 現在は非推奨の方法です。
 やむを得ず使わざるをえない場合もあります。
 
-大雑把にいうと、platform driverをLinux kernel起動時にロードさせて、プラットフォーム上に存在するplatform deviceを登録します。
+platform deviceを、kernelの一部として記述します。
 これにより、Linux kernelはプラットフォーム上にどのようなデバイスが搭載されているのかを認識することができます。
 
-[x86 platform](https://elinux.org/images/e/ec/Hart-x86-platform.pdf)
+下は[MinnowBoard](https://minnowboard.org/)というIntelの組込みプラットフォームのplatform device記述です。  
+偶然見つけたのですが、内容がシンプルなため、こちらを例に解説していきます。
+
 [minnowboard.c](https://kernel.googlesource.com/pub/scm/linux/kernel/git/horms/renesas-backport/+/v3.10.28-ltsi-rc1/drivers/platform/x86/minnowboard.c)
 
-### platform drivers
+platform deviceとして、GPIOで駆動できるLEDを登録しています。
 
-[omap1 serial](https://github.com/torvalds/linux/blob/master/arch/arm/mach-omap1/serial.c)
+### MinnowBoard platform driver
 
-platform deviceを利用するためには、次の手順を踏む必要があります。
+platform deviceを利用するために、次の手順を踏んでいます。
 
-1. platform driverを登録する
+1. platform driverをロードする
 2. deviceを登録する
 
-まず、`platform driverを登録する`では、独自のplatform driverを定義します。
-`my_platform_driver`としておきます。
+#### platform driverをロードする
 
-`deviceを登録する`では、登録したdriverに対応する名前で、deviceを登録します。。
+お決まりの`module_init`を使うパターンです。
+長いので説明に必要な箇所以外は省略しています。
+driverロード時に、`minnow_gpio_leds`というplatform deviceを登録しています。
 
-### platform driverの登録
+```c:minnowboard.c
+static int __init minnow_module_init(void)
+{
+...
+	err = platform_device_register(&minnow_gpio_leds);
+...
+}
+module_init(minnow_module_init);
+```
+
+それでは、platform deviceである`minnow_gpio_leds`の定義を見てみましょう。
+
+```c
+static struct platform_device minnow_gpio_leds = {
+	.name =	"leds-gpio",
+	.id = -1,
+	.dev = {
+		.platform_data = &minnow_leds_platform_data,
+	},
+};
+```
+
+### マクロを利用したplatform driverの登録
+
+MinnowBoardでは、`module_init`と`module_exit`を明示的に定義していましたが、マクロを利用する方法もあります。
 
 `module_platform_driver()`マクロを使います。
 特定の用途に特化したマクロも定義されています。
@@ -285,6 +315,7 @@ platform driverは一度修正すると、kernelを再度ビルドする必要�
 device treeは、プラットフォーム上のハードウェアは、木構造に似た形式で記述します。
 各デバイスは、ノードと呼ばれ、必要なパラメータやデータは、`property`という形で表現します。
 device treeを修正した場合、device treeを再コンパイルするだけで済み、kernelは再ビルドする必要がありません。
+現在、組込みLinuxで利用されるペリフェラルデバイス用driverの多くは、device treeに対応しています。
 
 device treeについては、下記記事にとても良くまとめられています。
 
