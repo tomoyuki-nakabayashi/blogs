@@ -8,17 +8,17 @@
 新しく取り付けられたデバイスを、ユーザーランドから利用可能にするエンジニアリングは、困難を伴う場合が多くあります。
 様々な困難をくぐり抜け、デバイスが動作した瞬間の喜びだけが、組込みLinux屋さんの救いです (なお、個人差があります)。
 
-世の中にはたくさんの組込みLinuxデバイスがあります。
-それらのデバイスは、多くの場合、まずSoCベンダーなどがリファレンスボードを作ります。TIが作っていたりNXPが作っていたりIntelが作っていたりするわけです。
+世の中にはたくさんの組込みLinuxプラットフォームがあります。
+それらのプラットフォームは、まずSoCベンダーなどがリファレンスボードを作ります。TIが作っていたりNXPが作っていたりIntelが作っていたりするわけです。
 それらの、リファレンスボードを、家電メーカーや車載機器メーカーが自社製品向けにカスタマイズして、独自の組込みLinuxプラットフォームを構築します。
 
 まず、SoCベンダーが違えば、どのようなペリフェラルデバイスが何個搭載されているか、や、同種ペリフェラルデバイスでもメーカーや型番が違ってきます。
 同じベンダーでも、デバイスの世代や、性能および消費電力のターゲットが異なれば、異なるデバイスが搭載されます。
 
 ここで問題になるのが、それらの異なるデバイスをどのようにLinux kernelで扱うか、です。
-例えば、あるボードでは0x10000000番地にUART16550が接続されていますが、別のボードにおいては、UARTは別アドレスに別デバイスが搭載されているでしょう。
+例えば、あるボードでは0x10000000番地にUART16550が接続されていますが、別のボードにおいては、別アドレスに別のUARTデバイスが搭載されているでしょう。
 
-また、SoCベンダーは、メーカーがボードをカスタマイズできるように、GPIOやSPIの口を用意しています。
+また、SoCベンダーは、メーカーがボードをカスタマイズできるように、GPIOやSPIといったIOを用意しています。
 GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社製品の要件に適合するように、いい感じにデバイスを追加したりして、カスタマイズするわけです。
 
 ここでGPIOを例にすると、GPIOはLEDに使われたり、割り込みに使われたり、何らかのデバイスの入出力に使われたりします。
@@ -27,28 +27,27 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 
 このような目的で利用されている機能は、次の3つがあります。
 
-1. board-specific platform device driver
+1. board-specific platform device driver (board file)
 2. device tree
 3. ACPI(のDSDT)
 
 本記事では、それぞれの方法について、簡単に紹介します。
 包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIO)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
 
-## 想定読者
+特にACPIについては、情報がなくて苦労しているので、本記事をきっかけに少しでもACPIでプラットフォームデバイスを記述するための情報が出回れば、と願っています。
 
-組込みLinuxに興味がある方を想定しています。
-
-## 用語定義
+### 用語定義
 
 本記事内で使用する用語について定義します。
 
 | 用語 | 定義 |
 | --- | --- |
+| non-discoverable device | kernelが自動で検出できないデバイスです。 |
 | platform device | non-discoverableなデバイスで、本記事内で対象とするデバイスです。 |
 | platform driver | platform device用のdevice driverです。 |
 | GPIO | 汎用入出力ピンです。[wikipedia GPIO](https://ja.wikipedia.org/wiki/GPIO)。ソフトウェアで入出力を切り替え可能で、入力ピンとしても出力ピンとしても利用できます。 |
 
-## 共通事項および俯瞰
+## 共通事項
 
 3つの方法で共通となることについてまとめます。
 
@@ -65,7 +64,8 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 ### board-specific platform device driver
 
 driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。  
-正式にはなんと呼べば良いのか、よくわかりません。過去のやり方で、現在は非推奨です。
+正式にはなんと呼べば良いのか、よくわかりません。
+過去のやり方で、現在は非推奨です。
 
 ### device tree
 
@@ -77,7 +77,6 @@ device treeと呼ばれる形式でデバイスの構成をツリー状に記述
 ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。  
 組込みLinuxで用いられるdriverで対応しているものは一部(という印象)です。私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
 
-
 それでは、3つの方法について、個別に見ていきましょう。
 
 ## board-specific platform device driver
@@ -85,25 +84,30 @@ ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテ�
 現在は非推奨の方法です。
 やむを得ず使わざるをえない場合もあります。
 
-platform deviceを、kernelの一部として記述します。
+platform deviceを、kernel driverとして記述します。
 これにより、Linux kernelはプラットフォーム上にどのようなデバイスが搭載されているのかを認識することができます。
+(kernel内に情報が取り込まれているので、ある意味当然ですが)
 
 下は[MinnowBoard](https://minnowboard.org/)というIntelの組込みプラットフォームのplatform device記述です。  
 偶然見つけたのですが、内容がシンプルなため、こちらを例に解説していきます。
 
 [minnowboard.c](https://kernel.googlesource.com/pub/scm/linux/kernel/git/horms/renesas-backport/+/v3.10.28-ltsi-rc1/drivers/platform/x86/minnowboard.c)
 
-platform deviceとして、GPIOで駆動できるLEDを登録しています。
+platform deviceとして、GPIOで制御できるLEDを登録しています。
 
 ### MinnowBoard platform driver
 
 platform deviceを利用するために、次の手順を踏んでいます。
 
-1. platform driverをロードする
+1. board-specific platform device driverをロードする
 2. deviceを登録する
 
-#### platform driverをロードする
+なお、Linux driverの初期化の流れは、去年のアドベントカレンダーの下記記事に解説があります。必要に応じて参照下さい。
+[Linuxのドライバの初期化が呼ばれる流れ](https://qiita.com/rarul/items/308d4eef138b511aa233)
 
+#### board-specific platform device driverをロードする
+
+Minnowboard用のdriverを実装して、driverをロードします。
 お決まりの`module_init`を使うパターンです。
 長いので説明に必要な箇所以外は省略しています。
 driverロード時に、`minnow_gpio_leds`というplatform deviceを登録しています。
@@ -118,6 +122,8 @@ static int __init minnow_module_init(void)
 module_init(minnow_module_init);
 ```
 
+#### deviceを登録する
+
 それでは、platform deviceである`minnow_gpio_leds`の定義を見てみましょう。
 
 ```c
@@ -130,7 +136,158 @@ static struct platform_device minnow_gpio_leds = {
 };
 ```
 
-### マクロを利用したplatform driverの登録
+重要なポイントは、`name`と`dev`メンバです。
+この`platform_device`構造体には、どのようなデバイスが搭載されているか、というデータを定義することができます。
+
+```c:include/linux/platform_device.h
+struct platform_device {
+    const char  *name;
+    struct device   dev;
+}
+```
+
+`name`は、`leds-gpio`という名前のdriverを、このデバイスにbindするために使います。
+[Documentation/driver-model/platform.txt](https://github.com/torvalds/linux/blob/master/Documentation/driver-model/platform.txt)
+
+>     * platform_device.name ... which is also used to for driver matching.
+
+
+
+
+
+platform deviceである`minnow_gpio_leds`がkernelに登録されると、`leds-gpio`という名前のdriverを探します。`leds-gpio` driverは次のように登録されているため、無事、driverが見つかり、そのdriverの`probe`関数を呼び出します。
+
+```c
+static struct platform_driver gpio_led_driver = {
+	.probe		= gpio_led_probe,
+	.driver		= {
+		.name	= "leds-gpio",
+	},
+};
+module_platform_driver(gpio_led_driver);
+```
+
+probe関数内でデバイスを初期化する際に参照するのが、`dev`メンバに定義したデータになります。
+`dev`は、`device`構造体で、いくつかのメンバが存在しますが、ここでは、`platform_data`メンバに`minnow_leds_platform_data`のポインタを代入しています。
+
+```c
+	.dev = {
+		.platform_data = &minnow_leds_platform_data,
+	},
+```
+
+`device`構造体の`platform_data`メンバは、次のように定義されています。
+
+```c:include/linux/device.h
+/**
+ * struct device - The basic device structure
+...
+ * @platform_data: Platform data specific to the device.
+ *     Example: For devices on custom boards, as typical of embedded
+ *     and SOC based hardware, Linux often uses platform_data to point
+ *     to board-specific structures describing devices and how they
+ *     are wired.  That can include what ports are available, chip
+ *     variants, which GPIO pins act in what additional roles, and so
+ *     on.  This shrinks the "Board Support Packages" (BSPs) and
+ *     minimizes board-specific #ifdefs in drivers.
+...
+struct device {
+    struct device       *parent;
+...
+    void        *platform_data; /* Platform specific data, device
+                       core doesn't touch it */
+...
+};
+```
+
+コメントにある通り、`platform_data`には、デバイス固有のデータを記述します。
+さて、`platform_data`の型は`void*`です。これは、好きな構造体を定義して、好きに使ってくれや、ということです。
+
+`leds-gpio` driverでは、`gpio_led_platform_data`を使用します。
+
+```c
+static struct gpio_led_platform_data minnow_leds_platform_data = {
+	.num_leds = ARRAY_SIZE(minnow_leds),
+	.leds = (void *) minnow_leds,
+};
+```
+
+`gpio_led_platform_data`では、複数のLEDを定義することができます(なので、led`s`-gpioという名前なのだと思われます)。
+MinnowBoardでは、次のように2つのLEDを定義しています。
+
+```c
+/* leds-gpio platform device structures */
+static const struct gpio_led minnow_leds[] = {
+	{
+      .name = "minnow_led0",
+      .gpio = GPIO_LED0,
+      .active_low = 0,
+	  .retain_state_suspended = 1,
+      .default_state = LEDS_GPIO_DEFSTATE_ON,
+	  .default_trigger = "heartbeat"
+    },
+	{
+      .name = "minnow_led1",
+      .gpio = GPIO_LED1,
+      .active_low = 0,
+	  .retain_state_suspended = 1,
+      .default_state = LEDS_GPIO_DEFSTATE_ON,
+	  .default_trigger = "mmc0"
+    },
+};
+```
+
+細かいところは少し置いておいて、`gpio`メンバでGPIOのピン番号を指定しています。
+GPIO_LED0/GPIO_LED1は、GPIOの10/11番に割り当てられているようです。
+
+```c:drivers/platform/x86/minnowboard-gpio.h
+#define GPIO_LED0 10
+#define GPIO_LED1 11
+```
+
+このように、MinnowBoard固有のデバイス情報をdriverに定義し、デバイスを登録することで、`leds-gpio` driverの`probe`関数が呼ばれます。
+この時、上記で定義したデバイス情報が引数として渡されます。
+
+少し、[leds-gpio.c](https://github.com/torvalds/linux/blob/master/drivers/leds/leds-gpio.c)の実装を確認してみましょう。
+
+```c
+static int gpio_led_probe(struct platform_device *pdev)
+{
+	struct gpio_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct gpio_leds_priv *priv;
+...
+    // privにメモリ領域を割り当て
+		priv->num_leds = pdata->num_leds;
+		for (i = 0; i < priv->num_leds; i++) {
+			const struct gpio_led *template = &pdata->leds[i];
+			struct gpio_led_data *led_dat = &priv->leds[i];
+            // GPIOを1つ初期化
+...
+        }
+...
+}
+```
+
+引数`pdev`は、`platform_device`のポインタ、という形で渡されます。
+`pdev->dev`を、自身のデータ構造体である`gpio_led_platform_data`型のポインタにキャストします。
+再掲載しますが、下記のようなplatform deviceを定義していましたね。
+
+```c
+static struct gpio_led_platform_data minnow_leds_platform_data = {
+	.num_leds = ARRAY_SIZE(minnow_leds),
+	.leds = (void *) minnow_leds,
+};
+```
+
+ここから、`num_leds`の回数分、`leds`のデータを使って、デバイスを初期化します。
+今回は、2つのLEDデバイスを定義しているので、2つのGPIOが初期化されます。
+
+このように、**ボードに固有のplatform deviceをdriverに定義**して、デバイスを初期化しています。
+これが、board-specific platform device driverのplatform device定義方法です。
+
+### マクロを利用したplatform driverの登録 (余談)
+
+ここは、飛ばしても問題ありません。
 
 MinnowBoardでは、`module_init`と`module_exit`を明示的に定義していましたが、マクロを利用する方法もあります。
 
@@ -181,136 +338,13 @@ static void __exit my_platform_driver_exit(void)
 module_exit(my_platform_driver_exit);
 ```
 
-driverを登録すると、対応するdeviceが登録されたときに、kernelが登録されているdriverの中から対応するdriverを探して、そのdriverのprobe関数が呼び出します。
-`platform_driver`を次のように定義しておくと、`my_platform_driver`と関連づいているdeviceが登録された時に、`my_platform_driver_probe`関数が呼び出されます。
-
-```c
-static struct platform_driver my_platform_driver = {
-    .probe = my_platform_driver_probe,
-    .remove = my_platform_driver_remove,
-    .driver = {
-        .name = KBUILD_MODNAME,
-        .owner = THIS_MODULE,
-    },
-};
-```
-
-Linux driverの初期化の流れは、去年のアドベントカレンダーの下記記事に解説があります。
-[Linuxのドライバの初期化が呼ばれる流れ](https://qiita.com/rarul/items/308d4eef138b511aa233)
-
-### Platform deviceの登録
-
-#### platform device
-
-`my_platform_driver`はkernelに登録済みのため、次のようなplatform deviceを登録すると、my_platform_driver_probe関数が呼び出されます。
-
-```c
-static struct platform_device my_platform_device = {
-    .name = "my_platform_driver",
-...
-};
-platform_device_register(&my_platform_device);
-```
-
-この`platform_device`には、どのようなデバイスが搭載されているか、というデータを定義することができます。
-
-```c:include/linux/platform_device.h
-struct platform_device {
-    const char  *name;
-    struct device   dev;
-}
-```
-
-ここで重要なのが、`struct device`の`platform_data`メンバです。
-
-```c:include/linux/device.h
-/**
- * struct device - The basic device structure
-...
- * @platform_data: Platform data specific to the device.
- *     Example: For devices on custom boards, as typical of embedded
- *     and SOC based hardware, Linux often uses platform_data to point
- *     to board-specific structures describing devices and how they
- *     are wired.  That can include what ports are available, chip
- *     variants, which GPIO pins act in what additional roles, and so
- *     on.  This shrinks the "Board Support Packages" (BSPs) and
- *     minimizes board-specific #ifdefs in drivers.
-...
-struct device {
-    struct device       *parent;
-...
-    void        *platform_data; /* Platform specific data, device
-                       core doesn't touch it */
-...
-};
-```
-
-コメントにある通り、`platform_data`には、カスタムボード固有のデバイス構造を記述します。
-例えば、どのGPIOが、なんの役割を担っているか、ということを指定していきます。
-
-さて、`platform_data`の型は`void*`です。これは、好きな構造体を定義して、好きに使って良い、ということです。
-`platform_device`と`platform_driver`は強い結合があり、`platform_driver`は、この`platform_data`に定義されたデバイス構造データを利用して、デバイスを初期化していきます。
-
-#### Specific platform device
-
-全部が全部独自でデバイス構造を用意するわけではなく、一般的なデバイスについては、データ構造が用意されています。
-例えば、SPIデバイスについては、`spi_board_info`という構造体が用意されています。この構造体には、多くのSPIデバイスが共通して持つパラメータが定義されています。
-例えば、次のように使います。
-
-```c
-static struct spi_board_info spidev_on_my_platform[] = {
-    {
-        .modalias = "spidev",
-        .max_speed_hz = 2000000,
-        .bus_num = 1,
-        .chip_select = 0,
-        .mode = SPI_MODE_0,
-    },
-};
-
-spi_register_board_info(&spidev_on_my_platform, 1);
-```
-
-この`spidev_on_my_platform`のような実体を定義し、`spi_register_board_info`でdeviceを登録することで、対応するSPIデバイスのdriverと紐付けることができます。
-上記の例では、`.modalias`で指定されている`spidev`というdriverと紐付けがされます。
-`spidev_on_my_platform`が登録された時点で、kernelは、spidev driverのprobe関数を呼び出します。
-probe関数呼び出し時、kernelは`spi_device`というデータを作成し、spidev driver probeの引数として渡します。
-これは、`.max_speed_hz`などのメンバから作成したSPIデバイスのパラメータ一式となります。
-spidev driverのprobe関数では、spi_deviceのデータを参照して、デバイスの初期化を実行します。
-
-このような共通のデータ構造を使って、SPIデバイスは、各driverのprobe関数で、デバイスを初期化します。
-しかし、多くのSPIデバイスでは、driverのprobe内で、用意されたメンバ以外のデータが必要になります。
-そのために、`spi_board_info`にも、`platform_data`メンバが用意されています。
-
-```c:include/linux/spi/spi.h
-/**
- * struct spi_board_info - board-specific template for a SPI device
- * @modalias: Initializes spi_device.modalias; identifies the driver.
- * @platform_data: Initializes spi_device.platform_data; the particular
- *	data stored there is driver-specific.
-...
- */
-struct spi_board_info {
-	char		modalias[SPI_NAME_SIZE];
-	const void	*platform_data;
-...
-}
-```
-
-共通のパラメータだけでは不足する場合には、独自のデータ構造体を定義し、driverで取得して利用します。
-
-まとめると、
-
-1. platform driverを登録する
-2. platform deviceを登録する
-3. 登録されたplatform deviceとplatform driverのマッチングを行い、対応するdriverのprobeを呼び出す
-4. probe内では、platform deviceで定義されたパラメータデータを利用して、デバイスの初期化を実施する
-
 ## device tree
 
 platform driverは一度修正すると、kernelを再度ビルドする必要があります。
 また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
-特定ボードの設定は、kernelに含まれるべきではない、という思想から、**device tree** が開発されることになりました。
+[arch/arm](https://github.com/torvalds/linux/tree/master/arch/arm)を見ると、`mach-`や`plat-`から始まるディレクトリが大量に存在します。これらが、board-specific platform device driverです。
+
+特定ボードの設定は、kernelに含まれるべきではない、という思想から、組込みボードでは**device tree** が広く使われるようになりました。
 
 device treeは、プラットフォーム上のハードウェアは、木構造に似た形式で記述します。
 各デバイスは、ノードと呼ばれ、必要なパラメータやデータは、`property`という形で表現します。
@@ -321,7 +355,7 @@ device treeについては、下記記事にとても良くまとめられてい
 
 [Device Tree についてのまとめ](https://qiita.com/koara-local/items/ed99a7b96a0ca252fc4e)
 
-現在もまとまった日本語情報はないと思います。本記事では包括的、または、体系的な説明はしません(できません)。例をいくつか挙げ、それがどのような意味なのか、を解説していきます。
+現在もまとまった日本語情報はないと思います。本記事では包括的、または、体系的な説明はしません(できません)。GPIOを例に、それがどのような意味なのか、を解説していきます。
 
 英語では、[Linux Device Drivers Development](https://www.amazon.co.jp/Linux-Device-Drivers-Development-Madieu/dp/1785280007)に解説があります。
 私はこの本を購入してだいぶ救われました(なお、個人差があります)。
@@ -332,7 +366,7 @@ bindings一覧は、`Documentation/devicetree/bingins`にまとめられてい�
 各ベンダー固有のforkにしか存在しないbindingsドキュメントもあるため、注意が必要です。
 
 [device tree bindings](https://github.com/OpenChannelSSD/linux/tree/master/Documentation/devicetree/bindings)を覗いてみると、`board`, `gpio`, `leds`, `serial`, `spi`などデバイス種別ごとのディレクトリが存在します。
-試しに、`leds/leds-gpio.txt`を見てみます。これは、GPIOで制御可能なLEDデバイスのノードを記述するための説明です。
+試しに、`leds/leds-gpio.txt`を見てみます。これは、上記MinnowBoardで解説したGPIOで制御可能なLEDデバイスのノードを記述するための説明です。
 propertyには、必須(shold/required)なものと、optionalなものがあります。下記の例では、`compatible`と`gpios`が必須のpropertyで、`default-state`はoptionalなpropertyです。
 
 
@@ -365,8 +399,9 @@ run-control {
 };
 ```
 
-`compatible`は、deviceとdriverを紐付けるためのpropertyです。`leds-gpio` driverを見るとわかりやすいです。
+`compatible`は、deviceとdriverをbindするためのpropertyです。`leds-gpio` driverを見るとわかりやすいです。
 `leds-gpio` driverは`platform_driver`として登録され、compatibleに`gpio-leds`という文字列が指定されたデバイスと紐付けされます。
+(`platform_device`構造体を使う時と異なり、name (driverの名前)ではなく、compatibleが一致するdriverとbindされます)
 
 [leds-gpio.c](https://github.com/OpenChannelSSD/linux/blob/master/drivers/leds/leds-gpio.c)
 
@@ -376,24 +411,12 @@ static const struct of_device_id of_gpio_leds_match[] = {
 	{},
 };
 MODULE_DEVICE_TABLE(of, of_gpio_leds_match);
-
-static struct platform_driver gpio_led_driver = {
-	.probe		= gpio_led_probe,
-	.shutdown	= gpio_led_shutdown,
-	.driver		= {
-		.name	= "leds-gpio",
-		.of_match_table = of_gpio_leds_match,
-	},
-};
-module_platform_driver(gpio_led_driver);
 ```
 
-上記のデバイスツリーの例では、`run-control`ノードに、redとgreenという2つの`gpio-leds` compatibleなデバイスを定義しています。
+上記のデバイスツリーの例では、`run-control`ノードに、redとgreenという2つのLEDを持つ`gpio-leds` compatibleなデバイスを定義しています。
 結果として、2つのGPIOは、`leds-gpio` driverで制御されます。
 
-https://dri.freedesktop.org/docs/drm/driver-api/gpio/board.html
-
-Open Firmware (OF) matching.
+driverがbindされたあとは、board-specific platform device driverと同様となります。
 
 ## ACPI DSDT
 
