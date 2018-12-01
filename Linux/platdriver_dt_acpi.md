@@ -483,7 +483,7 @@ DefinitionBlock ("leds.aml", "SSDT", 5, "", "LEDS", 1)
 ```
 
 device treeと比較すると、随分大げさに見えます。
-これは骨が折れそうですが、1つずつ見ていきましょう。
+これは _心_ 骨が折れそうですが、1つずつ見ていきましょう。
 
 device treeと共通する点としては、deviceをツリー上に表現する、ということです。
 
@@ -497,6 +497,7 @@ device treeと共通する点としては、deviceをツリー上に表現する
 `_SB`はSystem Busを意味するようです。最も上位のバスだと認識しておけば良さそうです。
 `PCI0`はそのまま、PCIバスです。
 `LPC`は[Low Pin Count](https://ja.wikipedia.org/wiki/Low_Pin_Count)でしょうか？自信がありません。
+[Accessing Intel ICH/PCH GPIOs](https://lab.whitequark.org/notes/2017-11-08/accessing-intel-ich-pch-gpios/)を見ると、歴史的に、Intelは、LPC下にGPIOコントローラを置いているようです？Intelわからん。
 
 いずれにしても、LPCの下に、`LEDS`というラベルのデバイスを定義しています。
 
@@ -515,10 +516,10 @@ https://patchwork.kernel.org/patch/6593351/
 _DDNは、Dos Device Nameだそうです。
 さらに読み進めます。
 
-`GpioIo()`は、`Operator`と呼ばれるもののようです。
-IO Resource Descriptor Macro、だそうです。
+`GpioIo()`は、`Operator`と呼ばれるもので、IO Resource Descriptor Macro、だそうです。
+マクロでdeviceのpropertyを設定している、という理解で良さそうです。
 
-```
+```:leds.asl
             Name (_CRS, ResourceTemplate () {
                 GpioIo (
                     Exclusive,                  // Not shared
@@ -535,26 +536,232 @@ IO Resource Descriptor Macro、だそうです。
             })
 ```
 
+GpioIo()マクロへの引数は、次のように、仕様書に掲載されています。
+
 ```
 GpioIo (Shared, PinConfig, DebounceTimeout, DriveStrength, IORestriction, ResourceSource,
 ResourceSourceIndex, ResourceUsage, DescriptorName, VendorData) {PinList}
 ```
 
-https://wiki.osdev.org/ACPI
-https://wiki.osdev.org/AML
-https://wiki.osdev.org/DSDT
+上の記述と照らし合わせます。
 
-## device treeとACPIの使い分け
+- `PinList`から、対象となるGPIOピンは10/11番のGPIO
+- 各ピンは専有される
+- pull up/pull downはしない
+- Outputポートとして利用する
 
-例えば、ACPIを利用するLinux kernelのコンフィギュレーションは次のようになります (GPIOの場合)。
+となります。これらのポート設定は、GPIOコントローラによってなされるので、設定を依頼するGPIOコントローラが指定されているのだと考えられます。
+
+GPIOピン、10/11にLEDのが接続されているようです。
+そういえば、Minnowboardのplatform device driverでも、ヘッダファイルで次のようにマクロが定義されていました。
+
+```c:minnowboard-gpio.h
+#define GPIO_LED0 10
+#define GPIO_LED1 11
+```
 
 ```
-CONFIG_GPIOLIB=y
-CONFIG_GPIO_ACPI=y
+            Name (_DSD, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"compatible", "gpio-leds"},
+                },
+                ToUUID("dbb8e3e6-5886-4ba6-8795-1319f52a966b"),
+                Package () {
+                    Package () {"led-0", "LED0"},
+                    Package () {"led-1", "LED1"},
+                }
+            })
+
+            /*
+             * For more information about these bindings see:
+             * Documentation/devicetree/bindings/leds/leds-gpio.txt and
+             * Documentation/acpi/gpio-properties.txt.
+             */
+            Name (LED0, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"label", "heartbeat"},
+                    Package () {"gpios", Package () {^LEDS, 0, 0, 0}},
+                    Package () {"linux,default-state", "off"},
+                    Package () {"linux,default-trigger", "heartbeat"},
+                    Package () {"linux,retain-state-suspended", 1},
+                }
+            })
+
+            Name (LED1, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"label", "sd-card"},
+                    Package () {"gpios", Package () {^LEDS, 0, 1, 0}},
+                    Package () {"linux,default-state", "off"},
+                    Package () {"linux,default-trigger", "mmc0"},
+                    Package () {"linux,retain-state-suspended", 1},
+                }
+            })
 ```
+
+続いて、`_DSD`です。kernelにドキュメントがあるので、少し見てみます。
+
+[DSD-properties-rules](https://github.com/torvalds/linux/blob/master/Documentation/acpi/DSD-properties-rules.txt)
+
+> The _DSD (Device Specific Data) configuration object, introduced in ACPI 5.1, allows any type of device configuration data to be provided via the ACPI namespace.
+
+おそらく、ACPI規格で網羅しきれない、deviceのpropertyを記述するためのものだと推測しています。
+DSDを使うことで、device treeと同様のproperty記述ができるようになる、ということでしょうか。
+
+各DSDは、識別子としてUUIDを持つ必要があるため、各要素にUUIDが設定されています。
+下の記述で、device treeと同様に、`compatible`を設定しています。
+
+```
+                Package () {
+                    Package () {"compatible", "gpio-leds"},
+                },
+```
+
+gpio-ledsのデバイスを2つ定義しています。
+
+```
+                    Package () {"led-0", "LED0"},
+                    Package () {"led-1", "LED1"},
+```
+
+それぞれの詳細なpropertyは、その下で記述されています。ここでは、LED0のみ掲載します。
+
+```
+            Name (LED0, Package () {
+                ToUUID("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () {
+                    Package () {"label", "heartbeat"},
+                    Package () {"gpios", Package () {^LEDS, 0, 0, 0}},
+                    Package () {"linux,default-state", "off"},
+                    Package () {"linux,default-trigger", "heartbeat"},
+                    Package () {"linux,retain-state-suspended", 1},
+                }
+            })
+```
+
+[leds-gpio.txt](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/leds-gpio.txt)を再び参照すると、各propertyがleds-gpioのpropertyとして存在していることがわかります。
+
+```
+LED sub-node properties:
+- gpios :  Should specify the LED's GPIO, see "gpios property" in
+  Documentation/devicetree/bindings/gpio/gpio.txt.  Active low LEDs should be
+  indicated using flags in the GPIO specifier.
+- label :  (optional)
+  see Documentation/devicetree/bindings/leds/common.txt
+- linux,default-trigger :  (optional)
+  see Documentation/devicetree/bindings/leds/common.txt
+- default-state:  (optional) The initial state of the LED.
+  see Documentation/devicetree/bindings/leds/common.txt
+- retain-state-suspended: (optional) The suspend state can be retained.Such
+  as charge-led gpio.
+```
+
+ただ、`gpios`については、ぱっと見で、自明ではありません。
+
+```
+                    Package () {"gpios", Package () {^LEDS, 0, 0, 0}},
+```
+
+device treeの例では、下のようになっていため、これと同様の要素になっているはずです。
+
+```
+		gpios = <&mpc8572 6 GPIO_ACTIVE_HIGH>;
+```
+
+[gpio.txt](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/gpio/gpio.txt)によると、gpiosの1つ目の項目はGPIOコントローラ、2つ目はGPIOコントローラ内のローカルオフセット、3つ目はピンのフラグになっています。
+
+> In the above example, &gpio1 uses 2 cells to specify a gpio. The first cell is a local offset to the GPIO line and the second cell represent consumer flags, such as if the consumer desire the line to be active low (inverted) or open drain.
+
+GPIOピンのフラグは、次の通り定義されています。
+
+```c:include/dt-bindings/gpio/gpio.h
+/* Bit 0 express polarity */
+#define GPIO_ACTIVE_HIGH 0
+#define GPIO_ACTIVE_LOW 1
+
+/* Bit 1 express single-endedness */
+#define GPIO_PUSH_PULL 0
+#define GPIO_SINGLE_ENDED 2
+
+/*
+ * Open Drain/Collector is the combination of single-ended active low,
+ * Open Source/Emitter is the combination of single-ended active high.
+ */
+#define GPIO_OPEN_DRAIN (GPIO_SINGLE_ENDED | GPIO_ACTIVE_LOW)
+#define GPIO_OPEN_SOURCE (GPIO_SINGLE_ENDED | GPIO_ACTIVE_HIGH)
+```
+
+これに沿って解釈してみましょう。
+
+```
+                    Package () {"gpios", Package () {^LEDS, 0, 0, 0}},
+```
+
+はい、なんか項目が1つ多いですね。
+一番後ろの`0`は、GPIOピンのフラグでしょう。`0`ということは、`GPIO_ACTIVE_HIGH`です。
+残りの部分ですが、GPIOコントローラと、ローカルオフセットである`10`を意味するはずです。
+どうにかこじつけてこの対応を説明しないと記事の収まりが悪いです。
+
+
+```
+        Device (LEDS)
+        {
+...
+            Name (_CRS, ResourceTemplate () {
+                GpioIo (
+...
+                    "\\_SB.PCI0.LPC", // ←GPIOコントローラ
+                    0)
+                {
+                    10, // ←ローカルオフセット
+                    11,
+                }
+```
+
+答えは、[gpio-properties.txt](https://github.com/torvalds/linux/blob/master/Documentation/acpi/gpio-properties.txt)にあります。
+
+> The format of the supported GPIO property is:
+>
+>  Package () { "name", Package () { ref, index, pin, active_low }}
+>
+>  ref - The device that has _CRS containing GpioIo()/GpioInt() resources,
+>        typically this is the device itself (BTH in our case).
+>  index - Index of the GpioIo()/GpioInt() resource in _CRS starting from zero.
+>  pin - Pin in the GpioIo()/GpioInt() resource. Typically this is zero.
+>  active_low - If 1 the GPIO is marked as active_low.
+
+つまり、デバイスの定義である`LEDS`からの相対位置で、ピン番号を指定しています。
+`Package () {^LEDS, 0, 0, 0}`が意味するところは、次のようになります。
+
+```
+        Device (LEDS) // ←`^LEDS`でここへの参照
+        {
+...
+            Name (_CRS, ResourceTemplate () {
+                GpioIo (  // ←_CRSの`0`番目
+...
+                    "\\_SB.PCI0.LPC",
+                    0)
+                {
+                    10, // ←_CRS0番の、`0`番目のピン
+                    11,
+                }
+```
+
+_わかるか！こんなもん！_ 一通り理解できたので、すっきりしましたね！
+
+ACPIでプラットフォームデバイスを定義するにあたり、辛いのは、具体例の少なさです。
+私のような、具体例を足がかりに、体系へと学習を進めるタイプの人間にとって、具体例が少ないのは危機的状況です。
+というわけで、少しでも情報が出まわるきっかけになれば、と思いACPIの具体例を取りあげて解説をしてみました。
+
+## おまけ
+
+### device treeとACPIの使い分け
 
 device driver構造体は、device tree、ACPI両方に対応しています。
-多くのdriverは、device treeのみ対応していますが、device tree、ACPI両方に対応しているdriverも存在しています。そのようなdriverは、両方のmatch_tableを定義してます。
+多く(?)の(組込み向け)driverは、device treeのみ対応していますが、device tree、ACPI両方に対応しているdriverも存在しています。そのようなdriverは、両方のmatch_tableを定義してます。
 
 [spi-pxa2xx](https://github.com/torvalds/linux/blob/master/drivers/spi/spi-pxa2xx.c)
 
@@ -577,7 +784,7 @@ struct device_driver {
 ```
 
 GPIOくらい一般的なdriverだと、device treeとACPI両方に対応しています。
-例えば、下のような実装になっています。
+例えば、下のような実装になっており、device treeを使う場合と、ACPIを使う場合とを、マクロレベルでラップしてくれています。
 
 ```c:drivers/gpio/gpiolib.c
 struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
