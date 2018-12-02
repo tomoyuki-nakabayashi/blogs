@@ -4,9 +4,9 @@
 
 ## はじめに
 
-組込みLinuxの醍醐味は、ペリフェラルデバイスのカスタマイズだと考えています。
+組込みLinuxの醍醐味の1つは、ペリフェラルデバイスのカスタマイズ対応だと考えています。
 新しく取り付けられたデバイスを、ユーザーランドから利用可能にするエンジニアリングは、困難を伴う場合が多くあります。
-様々な困難をくぐり抜け、デバイスが動作した瞬間の喜びだけが、組込みLinux屋さんの救いです (なお、個人差があります)。
+様々な困難をくぐり抜け、デバイスが動作した瞬間の喜びだけが、組込みLinux屋さんの救いです (なお、組込みLinux屋さんを代表する意見ではありません)。
 
 世の中にはたくさんの組込みLinuxプラットフォームがあります。
 それらのプラットフォームは、まずSoCベンダーなどがリファレンスボードを作ります。TIが作っていたりNXPが作っていたりIntelが作っていたりするわけです。
@@ -22,17 +22,18 @@
 GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社製品の要件に適合するように、いい感じにデバイスを追加したりして、カスタマイズするわけです。
 
 ここでGPIOを例にすると、GPIOはLEDに使われたり、割り込みに使われたり、何らかのデバイスの入出力に使われたりします。
-しかし、Linux kernelとしては、あるGPIOがLEDなのか割り込み線なのか何らかのデバイスの入出力なのか、は知りようがないわけです。
+しかし、Linux kernelとしては、あるGPIOがLEDなのか割り込み線なのか何らかのデバイスの入出力なのか、は知りようがないわけです。それどころか、どこにGPIOがあるのかすら、知りようがありません。
 そこで、GPIOは(memory mappedの場合)、ここのアドレスにあって、こういうデバイスだから、このdriverで動かしてね、ということをLinux kernelに伝える仕組みが必要になります。
 
 このような目的で利用されている機能は、次の3つがあります。
 
-1. board-specific platform device driver (board file)
+1. board file
 2. device tree
 3. ACPI(のDSDT)
 
 本記事では、それぞれの方法について、簡単に紹介します。
 包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIO)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
+組込みLinux屋さんがどういうエンジニアリングをしているか、少しでも身近に感じていただけると良いなぁ、と思っています。
 
 特にACPIについては、情報がなくて苦労しているので、本記事をきっかけに少しでもACPIでプラットフォームデバイスを記述するための情報が出回れば、と願っています。
 
@@ -61,7 +62,7 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 3つの方法では、それぞれ、プラットフォーム上のデバイス構成を記述する方法が異なります。  
 また、Linux kernelとの関係性も違ってきます。
 
-### board-specific platform device driver
+### board file
 
 driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。  
 正式にはなんと呼べば良いのか、よくわかりません。
@@ -79,7 +80,7 @@ ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテ�
 
 それでは、3つの方法について、個別に見ていきましょう。
 
-## board-specific platform device driver
+## board file
 
 現在は非推奨の方法です。
 やむを得ず使わざるをえない場合もあります。
@@ -283,7 +284,7 @@ static struct gpio_led_platform_data minnow_leds_platform_data = {
 今回は、2つのLEDデバイスを定義しているので、2つのGPIOが初期化されます。
 
 このように、**ボードに固有のplatform deviceをdriverに定義**して、デバイスを初期化しています。
-これが、board-specific platform device driverのplatform device定義方法です。
+これが、board fileのplatform device定義方法です。
 
 ### マクロを利用したplatform driverの登録 (余談)
 
@@ -342,7 +343,7 @@ module_exit(my_platform_driver_exit);
 
 platform driverは一度修正すると、kernelを再度ビルドする必要があります。
 また、boardごとに新しいdriverが追加され、kernelソースコードを肥大化を招いていました。
-[arch/arm](https://github.com/torvalds/linux/tree/master/arch/arm)を見ると、`mach-`や`plat-`から始まるディレクトリが大量に存在します。これらが、board-specific platform device driverです。
+[arch/arm](https://github.com/torvalds/linux/tree/master/arch/arm)を見ると、`mach-`や`plat-`から始まるディレクトリが大量に存在します。これらが、いわゆるboard fileと呼ばれるものです。
 
 特定ボードの設定は、kernelに含まれるべきではない、という思想から、組込みボードでは**device tree** が広く使われるようになりました。
 
@@ -416,7 +417,8 @@ MODULE_DEVICE_TABLE(of, of_gpio_leds_match);
 上記のデバイスツリーの例では、`run-control`ノードに、redとgreenという2つのLEDを持つ`gpio-leds` compatibleなデバイスを定義しています。
 結果として、2つのGPIOは、`leds-gpio` driverで制御されます。
 
-driverがbindされたあとは、board-specific platform device driverと同様となります。
+driverがbindされたあとは、board fileと同様となります。
+`leds-gpio` driverのprobe関数が呼ばれ、device treeで記述したpropertyが抽出できる形で、引数が渡されます。
 
 ## ACPI DSDT
 
@@ -806,7 +808,7 @@ struct device_driver {
 };
 ```
 
-GPIOくらい一般的なdriverだと、device treeとACPI両方に対応しています。
+GPIOくらいプリミティブなdriverだと、device treeとACPI両方に対応しています。
 例えば、下のような実装になっており、device treeを使う場合と、ACPIを使う場合とを、マクロレベルでラップしてくれています。
 
 ```c:drivers/gpio/gpiolib.c
@@ -826,6 +828,35 @@ struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
 		}
 ...
 ```
+
+## まとめ
+
+Linuxでplatform device (non-discoverableなdevice)の構造を記述する方法は3つありました。
+
+1. board file
+2. device tree
+3. ACPI(のDSDT)
+
+`board file`は、過去に用いられていた方法で、現在は非推奨の方法です。この方法では、platform deviceの構造を、board-specific platform device driverに記述し、kernelの一部に情報を埋め込みます。
+
+`device tree`は、組込みLinux構築において、現在広く利用されている方法です。この方法では、platform deviceの構造を、device treeファイルに記述し、kernelとは別に、`firmware`としてblobを形成します。
+
+`ACPI DSDT`は、デスクトップPCで広く利用されている方法です。この方法では、platform deviceの構造を、ACPIテーブルとして、ASLを使って記述します。kernelはACPIのお作法に乗っ取り、ACPIテーブルにアクセスします。
+
+それぞれのplatform device記述方法を、GPIOで制御するLEDを例に解説しました。
+
+それぞれの方法でplatform deviceを記述したあとは、下記の流れでデバイス初期化が行われます。
+
+1. platform driverをkernelに登録する
+2. platform deviceに対し、対応するdriverがbindされる
+3. bindされたdriverのprobe関数が呼ばれ、デバイスの初期化を行う
+
+こちらの流れは、board fileの項目で簡単に説明しました。
+
+このような方法を利用して、組込みLinux屋さんは、カスタムボードのLinuxユーザーランドから、deviceが利用できるようにしているわけですね。
+苦労も多々ありますが、デバイスが動いたときの喜びはひとしおです。
+
+ぜひ、軽い気持ちでラズパイあたりにデバイスをくっつけて、組込みLinuxを楽しんでみて下さい！
 
 ## 参考
 
