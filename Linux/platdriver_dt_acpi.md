@@ -1,4 +1,4 @@
-# 組込みLinuxでプラットフォーム上のデバイスを記述する3つの方法()
+# 組込みLinuxでplatform deviceを記述する3つの方法(board file/device tree/ACPI DSDT)
 
 この記事は[Linux Advent Calendar 2018](https://qiita.com/advent-calendar/2018/linux)の11日目の記事として書かれました。
 
@@ -32,10 +32,10 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 3. ACPI(のDSDT)
 
 本記事では、それぞれの方法について、簡単に紹介します。
-包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIO)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
+包括的もしくは体系的な説明ではなく、簡単なデバイス(GPIOで制御するLED)を例に、各方法でどのようにハードウェアを定義するか、見ていきます。
 組込みLinux屋さんがどういうエンジニアリングをしているか、少しでも身近に感じていただけると良いなぁ、と思っています。
 
-特にACPIについては、情報がなくて苦労しているので、本記事をきっかけに少しでもACPIでプラットフォームデバイスを記述するための情報が出回れば、と願っています。
+特にACPIについては、情報がなくて苦労しているので、本記事をきっかけに少しでもACPIでplatform deviceを記述するための情報が出回れば、と願っています。
 
 ### 用語定義
 
@@ -66,16 +66,20 @@ GPIOやSPIはいろいろな入出力に使えるので、メーカーは自社�
 
 driverにプラットフォーム上のデバイス構成を記述します。driverとしてLinux kernelに組み込まれます。  
 正式にはなんと呼べば良いのか、よくわかりません。
-過去のやり方で、現在は非推奨です。
+過去のやり方(2.6くらいまで？)で、現在は非推奨です。
 
 ### device tree
 
 device treeと呼ばれる形式でデバイスの構成をツリー状に記述します。`firmware`という扱いで、Linux kernelとは独立したblobを形成します。  
 組込みLinuxで用いられる多くのdriverが対応しています。
 
-### ACPI
+### ACPI DSDT
 
-ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。  
+ACPI (Advanced Configuration and Power Interface)とは、電源やデバイス構成などを統一的なインタフェースで扱えるようにする仕組みです。
+もう少し詳しく知りたい方は、@akachochin さんの下記資料を参照下さい。
+[初心者のためのACPI](https://www.slideshare.net/akachochin/acpi-82304408)
+
+ACPI Source Language (ASL)でデバイスの構成を記述します。ACPIテーブルの一部(DSDT)として、Linux kernelの外部に置かれます。
 組込みLinuxで用いられるdriverで対応しているものは一部(という印象)です。私もあまり馴染みがないため、間違っている部分があれば、編集リクエスト下さい。
 
 それでは、3つの方法について、個別に見ていきましょう。
@@ -151,10 +155,6 @@ struct platform_device {
 [Documentation/driver-model/platform.txt](https://github.com/torvalds/linux/blob/master/Documentation/driver-model/platform.txt)
 
 >     * platform_device.name ... which is also used to for driver matching.
-
-
-
-
 
 platform deviceである`minnow_gpio_leds`がkernelに登録されると、`leds-gpio`という名前のdriverを探します。`leds-gpio` driverは次のように登録されているため、無事、driverが見つかり、そのdriverの`probe`関数を呼び出します。
 
@@ -777,7 +777,7 @@ GPIOピンのフラグは、次の通り定義されています。
 
 _わかるか！こんなもん！_ 一通り理解できたので、すっきりしましたね！
 
-ACPIでプラットフォームデバイスを定義するにあたり、辛いのは、具体例の少なさです。
+ACPIでplatform deviceを定義するにあたり、辛いのは、具体例の少なさです。
 私のような、具体例を足がかりに、体系へと学習を進めるタイプの人間にとって、具体例が少ないのは危機的状況です。
 というわけで、少しでも情報が出まわるきっかけになれば、と思いACPIの具体例を取りあげて解説をしてみました。
 
@@ -862,3 +862,4 @@ Linuxでplatform device (non-discoverableなdevice)の構造を記述する方�
 
 - [Linux Device Drivers Development](https://www.amazon.co.jp/Linux-Device-Drivers-Development-Madieu/dp/1785280007)
 - [Linuxのドライバの初期化が呼ばれる流れ](https://qiita.com/rarul/items/308d4eef138b511aa233)
+- [初心者のためのACPI](https://www.slideshare.net/akachochin/acpi-82304408)
