@@ -114,6 +114,39 @@ use intrinsics;
 
 [Atomics and Codegen](http://llvm.org/docs/Atomics.html#atomics-and-codegen)
 
+## LLVMの状況
+
+どうやら、下記のパッチでcompare and swapが実装されたようです。
+2018/11/29にコミットされています。
+
+[`[RISCV]` Implement codegen for cmpxchg on RV32IA](https://reviews.llvm.org/D48131)
+
+[LLVM Atomics and Codegen](http://llvm.org/docs/Atomics.html#atomics-and-codegen)
+
+> cmpxchg -> loop with load-linked/store-conditional by overriding shouldExpandAtomicCmpXchgInIR(), emitLoadLinked(), emitStoreConditional()
+
+```cpp
+TargetLowering::AtomicExpansionKind
+RISCVTargetLowering::shouldExpandAtomicCmpXchgInIR(
+    AtomicCmpXchgInst *CI) const {
+  unsigned Size = CI->getCompareOperand()->getType()->getPrimitiveSizeInBits();
+  if (Size == 8 || Size == 16)
+    return AtomicExpansionKind::MaskedIntrinsic;
+  return AtomicExpansionKind::None;
+}
+
+Value *RISCVTargetLowering::emitMaskedAtomicCmpXchgIntrinsic(
+    IRBuilder<> &Builder, AtomicCmpXchgInst *CI, Value *AlignedAddr,
+    Value *CmpVal, Value *NewVal, Value *Mask, AtomicOrdering Ord) const {
+  Value *Ordering = Builder.getInt32(static_cast<uint32_t>(Ord));
+  Type *Tys[] = {AlignedAddr->getType()};
+  Function *MaskedCmpXchg = Intrinsic::getDeclaration(
+      CI->getModule(), Intrinsic::riscv_masked_cmpxchg_i32, Tys);
+  return Builder.CreateCall(MaskedCmpXchg,
+                            {AlignedAddr, CmpVal, NewVal, Mask, Ordering});
+}
+```
+
 ## 参考
 
 [rust-lang/rust](https://github.com/rust-lang/rust)
