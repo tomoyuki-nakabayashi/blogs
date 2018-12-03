@@ -156,6 +156,38 @@ use intrinsics;
 
 [Atomics and Codegen](http://llvm.org/docs/Atomics.html#atomics-and-codegen)
 
+## LLVM CodeGen
+
+LLVMで関連する箇所は、ターゲットアーキテクチャへの機械語命令生成部であると推測できます。
+`llvm/lib/Target/RISCV`のソースファイル一覧を眺めていると、下記のいかにもな名前のファイルがあります。
+RISC-Vでは、compare and swapを1命令で実現できないため、擬似命令として実装されているはずです。
+
+[RISCVExpandPseudoInsts.cpp](https://github.com/llvm-mirror/llvm/blob/master/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp)
+
+LLVMのことは全くわからないので、良い機会と考えて少し深堀りしてみましょう。ちなみに私はコンパイラも素人ですので、ツッコミをお待ちしております。
+コードジェネレーターのドキュメントを見てみます。まずは、high-level designから。
+
+[The high-level design of the code generator](https://llvm.org/docs/CodeGenerator.html#the-high-level-design-of-the-code-generator)
+
+コード生成は次のステップに分割されています。
+
+1. Instruction Selection
+2. Scheduling and Formation
+3. SSA-based Machine Code Optimizations
+4. Register Allocation
+5. Prolog/Epilog Code Insertion
+6. Late Machine Code Optimization
+7. Code Emission
+
+意外とわかりそうな感じです。
+
+### Instruction Selection
+
+LLVMコードを、ターゲットアーキテクチャの命令に変換します。SelectionDAGという方法をベースにしているようです。
+[SelectionDAGの概要](http://nothingcosmos.wiki.fc2.com/wiki/SelectionDAG%E3%81%AE%E6%A6%82%E8%A6%81)に説明がありました。感謝！
+
+https://llvm.org/docs/CodeGenerator.html#code-emission
+
 ## LLVMの状況
 
 どうやら、下記のパッチでcompare and swapが実装されたようです。
