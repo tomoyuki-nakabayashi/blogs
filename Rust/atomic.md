@@ -2,7 +2,7 @@
 
 ## compare and swap
 
-x86にはcompare and wapが〜
+x86にはcompare and swapが〜
 
 ## RISC-V Atomic Extension
 
@@ -37,6 +37,48 @@ impl AtomicBool {
 `#[cfg(target_has_atomic = "cas")]`、この部分ですね。`cas`は、compare_and_swapの略で、命令セットの記述で頻繁に用いられます。
 
 この`target_has_atomic`がどこでどのように定義されているか、を追いかける必要がありそうです。
+現在のRustでは、2つのRISC-Vアーキテクチャがサポートされています。
+
+[riscv32imc_unknown_none_elf.rs](https://github.com/rust-lang/rust/blob/master/src/librustc_target/spec/riscv32imc_unknown_none_elf.rs)
+[riscv32imac_unknown_none_elf.rs](https://github.com/rust-lang/rust/blob/master/src/librustc_target/spec/riscv32imac_unknown_none_elf.rs)
+
+1つは、Atomic命令をサポートしない`rv32imc`です。こちらをターゲットにする場合は、compare and swapがなくても納得です。
+target tripleを見ても、`atomic_cas`が`false`になっています。
+
+```rust
+pub fn target() -> TargetResult {
+...
+        options: TargetOptions {
+            linker: Some("rust-lld".to_string()),
+            cpu: "generic-rv32".to_string(),
+            // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=86005
+            max_atomic_width: None, //Some(32),
+            atomic_cas: false,  // atomic_casはdisableされている？
+            features: "+m,+c".to_string(),
+...
+        },
+```
+
+これに対して、Atomic命令をサポートする`rv32imac`(`a`の追加がAtomic命令サポートの意味)では、compare and swapが使えても良さそうです。
+上述したとおり、lr/scでcompare and swapが実現できるためです。
+
+```rust
+pub fn target() -> TargetResult {
+...
+        options: TargetOptions {
+            linker: Some("rust-lld".to_string()),
+            cpu: "generic-rv32".to_string(),
+            max_atomic_width: Some(32),
+            atomic_cas: false, // incomplete +a extension
+            features: "+m,+a,+c".to_string(),
+...
+        },
+```
+
+何やら、`// incomplete +a extension`なる不穏なコメントがあります(筆者が追記したものではなく、元々ソースコードに存在するコメントです)。
+ここの`atomic_cas`が`false`なので、`compare_and_swap`のアトリビュートで弾かれている、と考えるのが自然です。
+
+`atomic_cas: false`が`target_has_atomic = "cas"`に変換される過程も追いたいところですが、一旦先に進みましょう。
 
 それはそうとして、compare_and_swap関数も中身を追っておきましょう。
 `compare_exchange`に処理を移譲して、その結果がOk/Err、どちらでもその中身を返しています。
