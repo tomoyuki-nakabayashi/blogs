@@ -187,7 +187,7 @@ LLVMコードを、ターゲットアーキテクチャの命令に変換しま�
 ブロック内の命令をDAGで表現して、最適化する、とあります。最適化の部分はたくさんやっているので省略します。
 
 このフェーズでは、最終的に`MachineInstr`のリストに変換されるようです。
-[MachineInstr](https://llvm.org/docs/CodeGenerator.html#machineinstr)は、ターゲットマシンの命令を表現するクラスです。
+[MachineInstr](https://llvm.org/docs/CodeGenerator.html#machineinstr)は、ターゲットマシンの命令を表現するクラスです。命令のセマンティクスの情報は持っていないため、`TargetInstrInfo`を別途参照します。
 opcodeとoperandsを保有しているようなので、1命令1インスタンスになる、という理解で良いのでしょうか？
 命令の情報は、target description (*.td)ファイルに記載します。
 
@@ -218,9 +218,59 @@ MachineInstr *MI = BuildMI(MBB, DL, TII.get(X86::MOV32ri), DestReg).addImm(42);
 
 ### Late Machine Code Optimization
 
+もう1回コードに最適化をかけます。
 
+### Code Emission
 
-https://llvm.org/docs/CodeGenerator.html#code-emission
+最終的なアセンブラを出力します。
+
+ということで、今回一番関連がありそうなのは、`MachineInstr`への変換あたりと考えられます。
+改めて、[RISCVExpandPseudoInsts.cpp](https://github.com/llvm-mirror/llvm/blob/master/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp)を見ていきましょう。
+まず、こいつが何をしそうか、をincludeしているファイルから推測します。
+
+```cpp
+#include "RISCV.h"
+#include "RISCVInstrInfo.h"
+#include "RISCVTargetMachine.h"
+
+#include "llvm/CodeGen/LivePhysRegs.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+```
+
+`RISCVInstrInfo`は、命令のセマンティクス情報であることが、ドキュメントから判明しています。
+`RISCVTargetMachine`は、[The TargetMachine class](https://llvm.org/docs/CodeGenerator.html#the-targetmachine-class)によると、下のように書いてあり、`RISCVInstrInfo`を使うときに参照されるみたいです。
+
+> The TargetMachine class provides virtual methods that are used to access the target-specific implementations of the various target description classes via the get*Info methods (getInstrInfo, getRegisterInfo, getFrameInfo, etc.).
+
+必須の項目は、`DataLayout`で、Rustでもtarget記述でよく見る`e-m:e-p:32:32-i64:64-n32-S128`←こういう奴です。
+それ以外には、target-specific passを設定しています。ターゲットアーキテクチャ特有の処理をしたい場合に、任意の処理を挿入できるようです。
+
+`RISCVPassConfig`では、`addPreEmitPass2()`をoverrideしており、その中で、`createRISCVExpandPseudoPass()`をPassに追加しています。これできっとコード生成のフローの中で、`RISCVExpandPseudoInsts`の処理が呼び出されるのでしょう。
+
+RISCVTargetMachine.cpp
+
+```cpp
+class RISCVPassConfig : public TargetPassConfig {
+public:
+  RISCVPassConfig(RISCVTargetMachine &TM, PassManagerBase &PM)
+      : TargetPassConfig(TM, PM) {}
+
+  RISCVTargetMachine &getRISCVTargetMachine() const {
+    return getTM<RISCVTargetMachine>();
+  }
+...
+  void addPreEmitPass2() override;
+...
+};
+
+void RISCVPassConfig::addPreEmitPass2() {
+  // Schedule the expansion of AMOs at the last possible moment, avoiding the
+  // possibility for other passes to break the requirements for forward
+  // progress in the LR/SC block.
+  addPass(createRISCVExpandPseudoPass());
+}
+```
 
 ## LLVMの状況
 
