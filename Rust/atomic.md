@@ -181,10 +181,44 @@ LLVMのことは全くわからないので、良い機会と考えて少し深�
 
 意外とわかりそうな感じです。
 
-### Instruction Selection
+### Instruction Selection & Scheduling and Formation
 
 LLVMコードを、ターゲットアーキテクチャの命令に変換します。SelectionDAGという方法をベースにしているようです。
-[SelectionDAGの概要](http://nothingcosmos.wiki.fc2.com/wiki/SelectionDAG%E3%81%AE%E6%A6%82%E8%A6%81)に説明がありました。感謝！
+ブロック内の命令をDAGで表現して、最適化する、とあります。最適化の部分はたくさんやっているので省略します。
+
+このフェーズでは、最終的に`MachineInstr`のリストに変換されるようです。
+[MachineInstr](https://llvm.org/docs/CodeGenerator.html#machineinstr)は、ターゲットマシンの命令を表現するクラスです。
+opcodeとoperandsを保有しているようなので、1命令1インスタンスになる、という理解で良いのでしょうか？
+命令の情報は、target description (*.td)ファイルに記載します。
+
+機械語命令は、`MachineInstrBuilder`で生成します。
+
+```cpp
+// Create a 'DestReg = mov 42' (rendered in X86 assembly as 'mov DestReg, 42')
+// instruction and insert it at the end of the given MachineBasicBlock.
+const TargetInstrInfo &TII = ...
+MachineBasicBlock &MBB = ...
+DebugLoc DL;
+MachineInstr *MI = BuildMI(MBB, DL, TII.get(X86::MOV32ri), DestReg).addImm(42);
+```
+
+これで、`mov DestReg, 42`になるということですね。なるほど。
+
+### SSA-based Machine Code Optimizations
+
+詳細が書かれていないので、あまりわかりませんが、peephole optimizationなどを行うようです。
+
+### Register Allocation
+
+ここまでのコードは、無限個の仮想レジスタを対象としており、実際のターゲットアーキテクチャに即したレジスタ割り当てを行います。
+
+### Prolog/Epilog Code Insertion
+
+各関数の入り口、出口のコードを挿入します。stack pointerの操作や、registerの退避などを自動生成する、ということでしょう。
+
+### Late Machine Code Optimization
+
+
 
 https://llvm.org/docs/CodeGenerator.html#code-emission
 
