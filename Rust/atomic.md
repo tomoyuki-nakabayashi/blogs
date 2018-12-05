@@ -12,9 +12,10 @@ RISC-Vには、compare and swap命令が存在していません。
 
 load reserved/store conditionalという命令がatomicなロードストア命令として定義されています。
 
-## AtomicBoolソースコード解析
+## Dive into the Rust core library
 
-`AtomicBool`の実装を解析していきましょう。
+Atomic*であれば何でも良いので、一旦、`AtomicBool`の実装を解析していきましょう。
+これはRust core libraryの中にあります。
 
 :libcore/sync/atomic.rs
 
@@ -138,6 +139,7 @@ unsafe fn atomic_compare_exchange<T>(dst: *mut T,
 }
 ```
 
+compare and swapは、compare_exchangeを経て、`cxchg`と略されています。
 intrinsics、これは、llvmの[intrinsic](https://llvm.org/docs/ExtendingLLVM.html#intrinsic-function)に関係あるものでしょうか？
 atomic.rsでは、`use intrinsics`としています。こいつは何者でしょうか？
 
@@ -152,11 +154,112 @@ use intrinsics;
 お、LLVM codegenへの言及がなされています。
 これは、本格的にLLVMが原因で、RISC-Vでspinが使えない予感がします。
 
-[LLVM Atomic Instructions and Concurrency Guide](http://llvm.org/docs/Atomics.html)
+`src/libcore/intrinsics.rs`に進みましょう。
 
-[Atomics and Codegen](http://llvm.org/docs/Atomics.html#atomics-and-codegen)
+```rsut
+extern "rust-intrinsic" {
+    // NB: These intrinsics take raw pointers because they mutate aliased
+    // memory, which is not valid for either `&` or `&mut`.
 
-## LLVM CodeGen
+    /// Stores a value if the current value is the same as the `old` value.
+    /// The stabilized version of this intrinsic is available on the
+    /// `std::sync::atomic` types via the `compare_exchange` method by passing
+    /// [`Ordering::SeqCst`](../../std/sync/atomic/enum.Ordering.html)
+    /// as both the `success` and `failure` parameters. For example,
+    /// [`AtomicBool::compare_exchange`][compare_exchange].
+    ///
+    /// [compare_exchange]: ../../std/sync/atomic/struct.AtomicBool.html#method.compare_exchange
+    pub fn atomic_cxchg<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+```
+
+FFIっぽいな、と思いましたが、the bookを見るとどうやら違うようです。
+
+[The Book `intrinsics`](https://doc.rust-jp.rs/the-rust-programming-language-ja/1.6/book/intrinsics.html)
+
+> intrinsicsは特別なABI rust-intrinsic を用いて、FFIの関数で有るかのようにインポートされます。
+
+じゃあ実体はどこにあるねん？と思ったら、ソースコードの先頭に書いてありました。
+
+> The corresponding definitions are in librustc_codegen_llvm/intrinsic.rs.
+
+ということで、次はrustcです。
+
+## Dive into the rustc compiler
+
+`src/librustc_codegen_llvm/intrinsic.rs`
+
+兎にも角にも、`cxchg`で検索してみましょう。下のコードが引っかかりました。
+どうやら、巨大なパターンマッチの一部のようです。
+
+```rust
+            // This requires that atomic intrinsics follow a specific naming pattern:
+            // "atomic_<operation>[_<ordering>]", and no ordering means SeqCst
+            name if name.starts_with("atomic_") => {
+                use rustc_codegen_ssa::common::AtomicOrdering::*;
+                use rustc_codegen_ssa::common::
+                    {SynchronizationScope, AtomicRmwBinOp};
+
+                let split: Vec<&str> = name.split('_').collect();
+
+                let is_cxchg = split[1] == "cxchg" || split[1] == "cxchgweak";
+...
+```
+
+ものすごく上に進むと関数の入り口と、パターンマッチの入り口が見つかりました。
+
+```rust
+impl IntrinsicCallMethods<'tcx> for Builder<'a, 'll, 'tcx> {
+    fn codegen_intrinsic_call(
+        &mut self,
+        callee_ty: Ty<'tcx>,
+        fn_ty: &FnType<'tcx, Ty<'tcx>>,
+        args: &[OperandRef<'tcx, &'ll Value>],
+        llresult: &'ll Value,
+        span: Span,
+    ) {
+...
+        let llval = match name {
+```
+
+返り値なしで、`Builder`へのimplなので、self (Builder)にコード生成の何らかの変化を起こす作用がある関数だと予測できます。
+`name`は、intrinsicの名前です。例えば、libcore::intrinsicsにあった`"atomic_cxchg"`が該当します。少しわかりやすいものを抜粋します。
+
+```rust
+            "unreachable" => { ... },
+            "likely" => { ... },
+```
+
+と、このような感じです。では肝心の`atomic_cxchg`は、と言うと上のコードにあるアームです。
+
+```rust
+            name if name.starts_with("atomic_") => { ... }
+```
+
+`start_with`のガードでパターンマッチしています。さらに、`_`でsplitして、後半部分で`cxchg`かどうか、を判定しています。
+
+```rust
+            name if name.starts_with("atomic_") => {
+                use rustc_codegen_ssa::common::AtomicOrdering::*;
+                use rustc_codegen_ssa::common::
+                    {SynchronizationScope, AtomicRmwBinOp};
+
+                let split: Vec<&str> = name.split('_').collect();
+
+                let is_cxchg = split[1] == "cxchg" || split[1] == "cxchgweak";
+```
+
+## Dive into the LLVM IR
+
+さて、ここでLLVMにバトンタッチしましょう。まずは、LLVMでcompare and swapがどのように扱われているか、です。
+LLVM IRを調べると、`cmpxchg`が該当しそうです。
+
+[`cmpxchg` instruction](https://llvm.org/docs/LangRef.html#cmpxchg-instruction)
+
+> The ‘cmpxchg’ instruction is used to atomically modify memory. It loads a value in memory and compares it to a given value. If they are equal, it tries to store a new value into the memory.
+
+はい、間違いなくこれですね。LLVMを調査する上では、`cmpxchg`をキーワードに辿れば良いことがわかりました。
+
+## Dive into the LLVM CodeGen
 
 LLVMで関連する箇所は、ターゲットアーキテクチャへの機械語命令生成部であると推測できます。
 `llvm/lib/Target/RISCV`のソースファイル一覧を眺めていると、下記のいかにもな名前のファイルがあります。
@@ -452,7 +555,7 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 ## LLVMの状況
 
 どうやら、下記のパッチでcompare and swapが実装されたようです。
-2018/11/29にコミットされています。
+2018/11/29に(svn的な意味で)コミットされています。
 
 [`[RISCV]` Implement codegen for cmpxchg on RV32IA](https://reviews.llvm.org/D48131)
 
