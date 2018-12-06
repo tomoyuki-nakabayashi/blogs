@@ -140,8 +140,16 @@ unsafe fn atomic_compare_exchange<T>(dst: *mut T,
 ```
 
 compare and swapは、compare_exchangeを経て、`cxchg`と略されています。
-intrinsics、これは、llvmの[intrinsic](https://llvm.org/docs/ExtendingLLVM.html#intrinsic-function)に関係あるものでしょうか？
-atomic.rsでは、`use intrinsics`としています。こいつは何者でしょうか？
+intrinsics、の意味を知らなかったので、google先生に聞いてみます。
+**本来備わっている、固有の、本質的な** という意味のようです。わかったような、わからないような気がするため、もう少し調べてみました。
+
+[What are intrinsics?](https://stackoverflow.com/questions/2268562/what-are-intrinsics)
+
+> Normally, "intrinsics" refers to functions that are built-in
+
+なるほど。built-inで、コンパイラが最適化したコードを生成できる機能であることを意味するようです。腑に落ちました。
+これは、LLVMの[intrinsic](https://llvm.org/docs/ExtendingLLVM.html#intrinsic-function)に関係あることが推測できます。
+最終的にはLLVMに関係がありそうですが、まだRustのコードで見るところがあります。atomic.rsでは、`use intrinsics`としています。こいつは何者でしょうか？
 
 ```rust
 use intrinsics;
@@ -246,6 +254,115 @@ impl IntrinsicCallMethods<'tcx> for Builder<'a, 'll, 'tcx> {
                 let split: Vec<&str> = name.split('_').collect();
 
                 let is_cxchg = split[1] == "cxchg" || split[1] == "cxchgweak";
+```
+
+細かいところを少し飛ばして、関係が深そうな部分を見ます。パッと見ですが、下の部分で命令を生成しているように見えます。
+`self.atomic_cmpxchg()`を追いかけると、self (Builder)に命令を追加していそうな気がします。
+
+```rust
+                match split[1] {
+                    "cxchg" | "cxchgweak" => {
+                        let ty = substs.type_at(0);
+                        if int_type_width_signed(ty, self).is_some() {
+                            let weak = split[1] == "cxchgweak";
+                            let pair = self.atomic_cmpxchg(
+                                args[0].immediate(),
+                                args[1].immediate(),
+                                args[2].immediate(),
+                                order,
+                                failorder,
+                                weak);
+                            let val = self.extract_value(pair, 0);
+                            let success = self.extract_value(pair, 1);
+                            let success = self.zext(success, self.type_bool());
+
+                            let dest = result.project_field(self, 0);
+                            self.store(val, dest.llval, dest.align);
+                            let dest = result.project_field(self, 1);
+                            self.store(success, dest.llval, dest.align);
+                            return;
+                        } else {
+                            return invalid_monomorphization(ty);
+                        }
+                    }
+```
+
+builderの方を見てみましょう。
+`src/librustc_codegen_llvm/builder.rs`
+
+```rust
+    // Atomic Operations
+    fn atomic_cmpxchg(
+        &mut self,
+        dst: &'ll Value,
+        cmp: &'ll Value,
+        src: &'ll Value,
+        order: rustc_codegen_ssa::common::AtomicOrdering,
+        failure_order: rustc_codegen_ssa::common::AtomicOrdering,
+        weak: bool,
+    ) -> &'ll Value {
+        let weak = if weak { llvm::True } else { llvm::False };
+        unsafe {
+            llvm::LLVMRustBuildAtomicCmpXchg(
+                self.llbuilder,
+                dst,
+                cmp,
+                src,
+                AtomicOrdering::from_generic(order),
+                AtomicOrdering::from_generic(failure_order),
+                weak
+            )
+        }
+    }
+```
+
+`Value`とは、`llvm::LLVMRustBuildAtomicCmpXchg`は、LLVMのFFIとしてexternされています。
+`src/librustc_codegen_llvm/llvm/ffi.rs`
+
+```rust
+extern { pub type Value; }
+
+extern "C" {
+    pub fn LLVMRustBuildAtomicCmpXchg(B: &Builder<'a>,
+                                      LHS: &'a Value,
+                                      CMP: &'a Value,
+                                      RHS: &'a Value,
+                                      Order: AtomicOrdering,
+                                      FailureOrder: AtomicOrdering,
+                                      Weak: Bool)
+                                      -> &'a Value;
+}
+```
+
+LLVMにつなぐためのラッパーにたどり着きました。
+`src/rustllvm/RustWrapper.cpp`
+
+```cpp
+extern "C" LLVMValueRef
+LLVMRustBuildAtomicCmpXchg(LLVMBuilderRef B, LLVMValueRef Target,
+                           LLVMValueRef Old, LLVMValueRef Source,
+                           LLVMAtomicOrdering Order,
+                           LLVMAtomicOrdering FailureOrder, LLVMBool Weak) {
+  AtomicCmpXchgInst *ACXI = unwrap(B)->CreateAtomicCmpXchg(
+      unwrap(Target), unwrap(Old), unwrap(Source), fromRust(Order),
+      fromRust(FailureOrder));
+  ACXI->setWeak(Weak);
+  return wrap(ACXI);
+}
+```
+
+LLVMのIRBuilderに繋がっていることでしょう。多分。
+`llvm::IRBuilder.h`
+
+```cpp
+   AtomicCmpXchgInst *
+   CreateAtomicCmpXchg(Value *Ptr, Value *Cmp, Value *New,
+                       AtomicOrdering SuccessOrdering,
+                       AtomicOrdering FailureOrdering,
+                       SyncScope::ID SSID = SyncScope::System) {
+     return Insert(new AtomicCmpXchgInst(Ptr, Cmp, New, SuccessOrdering,
+                                         FailureOrdering, SSID));
+   }
 ```
 
 ## Dive into the LLVM IR
