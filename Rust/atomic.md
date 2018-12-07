@@ -1,5 +1,16 @@
 # core::sync::atomic
 
+## はじめに〜事の発端〜
+
+2018年11月初旬
+
+僕「RustでRISC-VをターゲットにOS自作するの楽しい〜〜。」
+僕「UARTデバイスに複数threadから安全にアクセスできるようにするので！」
+
+## プロセッサのAtomicなデータ更新
+
+[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)
+
 ## compare and swap
 
 x86にはcompare and swapが〜
@@ -8,9 +19,13 @@ x86にはcompare and swapが〜
 
 RISC-Vには、compare and swap命令が存在していません。
 
-### lr/sc
+### ll/scまたはlr/sc
 
 load reserved/store conditionalという命令がatomicなロードストア命令として定義されています。
+
+RISC-Vで、compare and swapではなくlr/scを採用する理由は、必要となるオペランド数によるところが大きいようです。
+compare and swapでは、ソースオペランドが3つ必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
+これは、データパスを単純に保つ上で重要であるため、RISC-Vの選択は納得のいくものです。
 
 ## Dive into the Rust core library
 
@@ -180,7 +195,7 @@ extern "rust-intrinsic" {
     pub fn atomic_cxchg<T>(dst: *mut T, old: T, src: T) -> (T, bool);
 ```
 
-FFIっぽいな、と思いましたが、the bookを見るとどうやら違うようです。
+externされているだけなので、FFIっぽいな、と思いましたが、the bookを見るとどうやら違うようです。
 
 [The Book `intrinsics`](https://doc.rust-jp.rs/the-rust-programming-language-ja/1.6/book/intrinsics.html)
 
@@ -316,12 +331,15 @@ builderの方を見てみましょう。
     }
 ```
 
-`Value`とは、`llvm::LLVMRustBuildAtomicCmpXchg`は、LLVMのFFIとしてexternされています。
+`Value`と、`llvm::LLVMRustBuildAtomicCmpXchg`は、LLVMのFFIとしてexternされています。
 `src/librustc_codegen_llvm/llvm/ffi.rs`
+[LLVM Value](http://llvm.org/doxygen/classllvm_1_1Value.html#details)を見ると、InstructionやFunctionの基底クラスである、となっています。
 
 ```rust
+// Opaque pointer types
+...
 extern { pub type Value; }
-
+...
 extern "C" {
     pub fn LLVMRustBuildAtomicCmpXchg(B: &Builder<'a>,
                                       LHS: &'a Value,
@@ -365,9 +383,12 @@ LLVMのIRBuilderに繋がっていることでしょう。多分。
    }
 ```
 
+LLVM側は、`AtomicCmpXchgInst`のポインタを返してきます。`AtomicCmpXchgInst`は、`Value`の派生クラスです。これでRust側でcompare and swap命令のオブジェクトを得られたことになります。
+深い…。
+
 ## Dive into the LLVM IR
 
-さて、ここでLLVMにバトンタッチしましょう。まずは、LLVMでcompare and swapがどのように扱われているか、です。
+さて、Rust側は大方見終わったので、LLVMにバトンタッチしましょう。まずは、LLVMでcompare and swapがどのように扱われているか、です。
 LLVM IRを調べると、`cmpxchg`が該当しそうです。
 
 [`cmpxchg` instruction](https://llvm.org/docs/LangRef.html#cmpxchg-instruction)
@@ -676,31 +697,8 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 
 [`[RISCV]` Implement codegen for cmpxchg on RV32IA](https://reviews.llvm.org/D48131)
 
-[LLVM Atomics and Codegen](http://llvm.org/docs/Atomics.html#atomics-and-codegen)
-
-> cmpxchg -> loop with load-linked/store-conditional by overriding shouldExpandAtomicCmpXchgInIR(), emitLoadLinked(), emitStoreConditional()
-
-```cpp
-TargetLowering::AtomicExpansionKind
-RISCVTargetLowering::shouldExpandAtomicCmpXchgInIR(
-    AtomicCmpXchgInst *CI) const {
-  unsigned Size = CI->getCompareOperand()->getType()->getPrimitiveSizeInBits();
-  if (Size == 8 || Size == 16)
-    return AtomicExpansionKind::MaskedIntrinsic;
-  return AtomicExpansionKind::None;
-}
-
-Value *RISCVTargetLowering::emitMaskedAtomicCmpXchgIntrinsic(
-    IRBuilder<> &Builder, AtomicCmpXchgInst *CI, Value *AlignedAddr,
-    Value *CmpVal, Value *NewVal, Value *Mask, AtomicOrdering Ord) const {
-  Value *Ordering = Builder.getInt32(static_cast<uint32_t>(Ord));
-  Type *Tys[] = {AlignedAddr->getType()};
-  Function *MaskedCmpXchg = Intrinsic::getDeclaration(
-      CI->getModule(), Intrinsic::riscv_masked_cmpxchg_i32, Tys);
-  return Builder.CreateCall(MaskedCmpXchg,
-                            {AlignedAddr, CmpVal, NewVal, Mask, Ordering});
-}
-```
+今後、このコミットが反映されたLLVMがRustで採用されれば、RISC-Vがターゲットでもspinやlazy_staticが使えそうです！
+それまでは、間に合せの方法で凌いでも良い気がしますね。
 
 ## 参考
 
