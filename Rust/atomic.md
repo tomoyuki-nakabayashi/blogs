@@ -1,11 +1,60 @@
-# core::sync::atomic
+# Rust × RISC-VのAtomic命令 2018 edition〜LLVMを添えて〜
 
-## はじめに〜事の発端〜
+## はじめに
+
+### 事の発端あるいは茶番
 
 2018年11月初旬
 
-僕「RustでRISC-VをターゲットにOS自作するの楽しい〜〜。」
-僕「UARTデバイスに複数threadから安全にアクセスできるようにするので！」
+僕「[RustでRISC-VをターゲットにOS自作](https://qiita.com/tomoyuki-nakabayashi/items/76f912adb6b7da6030c7)するの楽すぎ！至高！」
+僕「UARTデバイスを複数threadから安全にアクセスできるようにするぞ！」
+僕「これ、[Writing an OS in Rust](https://os.phil-opp.com/)でやったところだ！`lazy_static`とか`spin` crate使えば良いんでしょ？」
+
+```toml
+$ tail Cargo.toml
+...
+[dependencies]
+spin = "0.4.10"
+```
+
+僕「よし、Cargo.tomlも書いたし、簡単な実装もした。いざ！」
+
+```
+$ cargo build
+   Compiling spin v0.4.10
+error[E0599]: no method named `compare_and_swap` found for type `core::sync::atomic::AtomicBool` in the current scope
+   -->
+    |
+157 |         while self.lock.compare_and_swap(false, true, Ordering::Acquire) != false
+    |                         ^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `compare_and_swap` found for type `core::sync::atomic::AtomicBool` in the current scope
+```
+
+僕「めっちゃ辛そうなエラー出るやん・・・」
+
+### この記事 is 何？
+
+Rust core libraryの`core::sync::atomic::Atomic*.compare_and_swap`関数を解析した経過と結果を記したものです。それ以外のことは出てきません。
+途中からLLVMに突入しますので、C++成分がそれなりに混じっています。
+
+今回、この記事に関わる調査を行ったおかげで、次の知見を得ることができました (私は言語処理系素人です)。
+
+- Rust target tripleの設定
+- rustc compilerとLLVMとの関係性を少し
+- LLVMのコード生成を少し
+
+一番大きかった収穫は、自分程度のレベルでも意外と読める、ということです。これは、コード自体の品質が高いこともありますが、コメントやテストコードが充実しているためです。自分自身でもこのようなリテラシーの高いコードを書いて行こう、という気持ちになれて、非常に良い刺激を得ることができました。
+やりたいことができない、がスタート地点でしたが、結果として前よりもっとRustが好きになりました。
+
+つまり、この記事の趣旨は、**みんなに広めよう！Rust言語処理系リーディングの輪！** ということです。
+
+以降、本記事は次の流れで展開します。
+
+1. compare and swapとは？
+2. Rust core library解析
+3. rustc compiler解析
+4. LLVMコード生成部解析
 
 ## プロセッサのAtomicなデータ更新
 
@@ -26,6 +75,38 @@ load reserved/store conditionalという命令がatomicなロードストア命�
 RISC-Vで、compare and swapではなくlr/scを採用する理由は、必要となるオペランド数によるところが大きいようです。
 compare and swapでは、ソースオペランドが3つ必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
 これは、データパスを単純に保つ上で重要であるため、RISC-Vの選択は納得のいくものです。
+
+## Dive into the Rust Error Message
+
+改めて、エラーコードを再掲載します。やはり何事も基本はエラーメッセージを解析するところからです。
+
+```
+$ cargo build
+   Compiling spin v0.4.10
+error[E0599]: no method named `compare_and_swap` found for type `core::sync::atomic::AtomicBool` in the current scope
+   -->
+    |
+157 |         while self.lock.compare_and_swap(false, true, Ordering::Acquire) != false
+    |                         ^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `compare_and_swap` found for type `core::sync::atomic::AtomicBool` in the current scope
+```
+
+まず、エラーメッセージはそのまま、compare_and_swap関数がない、というものです。
+一応、`E0599`というError Indexも確認しておきましょう。
+[Rust Compiler Error Index](https://doc.rust-lang.org/error-index.html)には、サンプルコードを含めた、Rust compilerのエラー解説があります。
+
+> This error occurs when a method is used on a type which doesn't implement it:
+> Erroneous code example:
+> ```rust
+> struct Mouth;
+>
+> let x = Mouth;
+> x.chocolate(); // error: no method named `chocolate` found for type `Mouth`
+>               //        in the current scope
+> ```
+
+残念ながら、今回は役に立ちそうもありません。
 
 ## Dive into the Rust core library
 
