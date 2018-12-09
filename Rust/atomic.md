@@ -1,6 +1,9 @@
-# Rust × RISC-VのAtomic命令 2018 edition〜LLVMを添えて〜
+# Rust Atomic compare and swap 2018 edition RISC-V仕立て〜LLVMを添えて〜
 
 ## はじめに
+
+本記事は、[Rust Advent Calendar 2018](https://qiita.com/advent-calendar/2018/rust)の22日目として書かれました。
+タイトルは少しふざけていますが、内容は真剣です。ぜひ見ていって下さい。
 
 ### 事の発端あるいは茶番
 
@@ -32,6 +35,7 @@ error[E0599]: no method named `compare_and_swap` found for type `core::sync::ato
 ```
 
 僕「めっちゃ辛そうなエラー出るやん・・・」
+僕「なんか納得いかんから、調べたろ」
 
 ### この記事 is 何？
 
@@ -58,23 +62,105 @@ Rust core libraryの`core::sync::atomic::Atomic*.compare_and_swap`関数を解�
 
 ## プロセッサのAtomicなデータ更新
 
-[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)
+排他制御の一種です。近代のプロセッサでは、マルチスレッドにおいて、Atomicなメモリ操作が行えるロードストア命令が用意されています。
+[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)、に詳しく書かれています。以降のコード例で引用させて頂いています。
 
-## compare and swap
+排他制御の必要性について、簡単に説明します。よく銀行取引の例をみかける、あれです。
+プロセッサレベルでも同様で、スレッドAとスレッドBが、共有メモリにアクセスする場合に、スレッドAがデータ更新している途中で、スレッドBがデータを更新してしまうと、データの整合性がなくなってしまいます。
+シングルコアプロセッサでは、単に割り込みを禁止すれば良いのですが、マルチコアプロセッサにおいては、他のプロセッサが共有データを変更していないこと、を保証する必要があります。
+そこで、近代の命令セットアーキテクチャではAtomicなメモリ操作命令、というものを持っています。Atomicとは、その操作を行っている間、別の操作に割り込まれないことを意味します。
 
-x86にはcompare and swapが〜
+典型的な排他制御では、spin lockやMutexのように、共有データにロックをかけることで、排他制御します。ロックがかかっている間は、他スレッドの共有データへのアクセスを禁止します。
+ロックがかかっている間、他スレッドは待ち状態になってしまうため、パフォーマンス低下に繋がる恐れがあります。
 
-## RISC-V Atomic Extension
+そこで、プロセッサではロックを使用せずに、Atomicな共有データアクセスをするための命令を備えています。
+この命令には、2つの方法があります。
 
-RISC-Vには、compare and swap命令が存在していません。
+- compare and scap (cas)
+- load link/store condition (ll/sc)
+
+RISC-Vでは、ll/scではなく、load reserved/store conditional (lr/sc)というニーモニックになっています。
+
+### compare and swap
+
+x86では`cmpxchg`という名前の命令です。x86のアセンブリを説明するのは大変なので、擬似コードで見ていきます([ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)からの引用)。
+あるメモリアドレス`ptr`の現在値が、古い値`old`と等しければ、新しい値`old`を`ptr`に書き込みます(古い値も新しい値もメモリ上にある)。新しい値を書き込んだ場合、`1`を返します。
+
+```c
+int CAS(void *ptr, void *old, void *new) {
+  if (memcmp(ptr, old) == 0) {
+    memcpy(ptr, new); // Set new value to ptr
+    return 1;
+  }
+  memcpy(old, ptr);
+  return 0;
+}
+```
+
+使い方を見ると理解しやすいと思うので、[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)の例をさらに引用します。
+
+```c
+void AtomicOp(int *ptr)
+{
+    while(1)
+    {
+        const int OldValue = *ptr;  // ★1
+        const int NewValue = UpdateData(OldValue); //Update old value to new value
+
+        // If the result is the original value, the new value was stored.
+        if(CAS(ptr, &OldValue, &NewValue))  // ★2
+        {
+            return;
+        }
+    }
+}
+```
+
+上記コードを説明します。あるアドレス`ptr`から、古い値`OldValue`を読み込み、新しい値`NewValue`を計算します。
+compare and swap命令では、`ptr`に格納されている値が`OldValue`と等しいときに、`NewValue`を`ptr`に書き込みます。`NewValue`を書き込んだ時、結果は`1`に、それ以外のときは`0`になります。
+compare and swap命令実行時、`ptr`に格納されている値が`OldValue`と等しい、ということは、`★1`から`★2`の間にデータが変更されていない、ということになります(実際は擬陽性の問題があります)。これは、他のスレッドから値が書き換えられていないことを意味します。
+もし、データが書き換えられていた場合は、データ更新は行われず、もう1度`OldValue`を読み込むところからやり直します。
 
 ### ll/scまたはlr/sc
 
-load reserved/store conditionalという命令がatomicなロードストア命令として定義されています。
+ARMやRISC-Vがサポートしている命令です。こちらの命令では、ll/scというロードストア命令をペアで使います。
+ll命令で、「このアドレスのデータ、予約しとくわ」ということで、reservedフラグをつけておきます。sc命令で値を更新する際、「予約しといたアドレスのデータ、まだ予約されてる？されてるんやったら更新しといて！」ということをやります。
 
-RISC-Vで、compare and swapではなくlr/scを採用する理由は、必要となるオペランド数によるところが大きいようです。
+RISC-Vのlr/scについては、[RISC-V specifications](https://riscv.org/specifications/)の`7. "A" Standard Extension for Atomic Instructions, Version 2.0`に記載があります。
+
+RISC-V命令セットで、compare and swapではなくlr/scを採用する理由は、ABA問題と、必要となるオペランド数によるところが大きいです。
 compare and swapでは、ソースオペランドが3つ必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
-これは、データパスを単純に保つ上で重要であるため、RISC-Vの選択は納得のいくものです。
+これは、データパスを単純に保つ上で重要であるため、RISCプロセッサの選択として、納得のいくものです。
+
+> Both compare-and-swap (CAS) and LR/SC can be used to build lock-free data structures. After
+> extensive discussion, we opted for LR/SC for several reasons: 1) CAS suffers from the ABA
+> problem, which LR/SC avoids because it monitors all accesses to the address rather than only
+> checking for changes in the data value; 2) CAS would also require a new integer instruction format
+> to support three source operands (address, compare value, swap value) as well as a different
+> memory system message format, which would complicate microarchitectures;
+
+他2つの理由も併記されているので、興味がある方は、specificationをご参照下さい。
+
+lr/scを使って、compare and swap機能を実現する場合、次のようにします。
+
+```asm
+# a0 holds address of memory location                  -> ptr
+# a1 holds expected value                              -> old
+# a2 holds desired value                               -> new
+# a0 holds return value, 0 if successful, !0 otherwise -> return
+cas:
+    lr.w t0, (a0)     # Load original value.
+    bne t0, a1, fail  # Doesn’t match, so fail.
+    sc.w a0, a2, (a0) # Try to update.
+    bnez a0, cas      # Retry if store-conditional failed.
+    jr ra # Return.
+fail:
+    li a0, 1          # Set return to failure.
+    jr ra # Return.
+```
+
+このように、RISC-Vに備わっているlr/sc命令を組み合わせることでcompare and swapが実現できるため、spin crateをコンパイルしようとしたときに、`Atomic*`型に`compare_and_swap`関数が実装されていない、というのは不自然であると考えました。
+そこで、実装がどうなっているのか気になったため、調査を行うこととしました。
 
 ## Dive into the Rust Error Message
 
@@ -174,12 +260,9 @@ pub fn target() -> TargetResult {
 
 何やら、`// incomplete +a extension`なる不穏なコメントがあります(筆者が追記したものではなく、元々ソースコードに存在するコメントです)。
 ここの`atomic_cas`が`false`なので、`compare_and_swap`のアトリビュートで弾かれている、と考えるのが自然です。
-
 `atomic_cas: false`が`target_has_atomic = "cas"`に変換される過程も追いたいところですが、一旦先に進みましょう。
 
-それはそうとして、compare_and_swap関数も中身を追っておきましょう。
-`compare_exchange`に処理を移譲して、その結果がOk/Err、どちらでもその中身を返しています。
-
+compare_and_swap関数では、`compare_exchange`に処理を移譲して、その結果がOk/Err、どちらでもその中身を返しています。
 `compare_exchange`の中身に移ります。
 
 :libcore/sync/atomic.rs
@@ -257,7 +340,6 @@ use intrinsics;
 
 お、LLVM codegenへの言及がなされています。
 これは、本格的にLLVMが原因で、RISC-Vでspinが使えない予感がします。
-
 `src/libcore/intrinsics.rs`に進みましょう。
 
 ```rsut
@@ -361,7 +443,7 @@ impl IntrinsicCallMethods<'tcx> for Builder<'a, 'll, 'tcx> {
                         let ty = substs.type_at(0);
                         if int_type_width_signed(ty, self).is_some() {
                             let weak = split[1] == "cxchgweak";
-                            let pair = self.atomic_cmpxchg(
+                            let pair = self.atomic_cmpxchg(  // ここがあやしい
                                 args[0].immediate(),
                                 args[1].immediate(),
                                 args[2].immediate(),
@@ -383,7 +465,7 @@ impl IntrinsicCallMethods<'tcx> for Builder<'a, 'll, 'tcx> {
                     }
 ```
 
-builderの方を見てみましょう。
+`atomic_cmpxchg`関数は、Builderの関数なので、Builderの実装を見てみましょう。とうとうLLVM FFIへの入り口に到達します。
 `src/librustc_codegen_llvm/builder.rs`
 
 ```rust
@@ -771,15 +853,32 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 }
 ```
 
-## LLVMの状況
+さて、ここまで見てくださった読者の皆様、何かおかしいと思いませんか？
+そう、**RISC-Vターゲットにcompare and swap命令、実装されているじゃん！** ということです。
 
-どうやら、下記のパッチでcompare and swapが実装されたようです。
+実はこのLLVMのコードは、2018/12月初旬に、LLVMのmaster branchから持ってきています。
+
+## LLVM RISC-Vのcompare and swap対応状況
+
+下記のパッチでcompare and swapが実装されたようです。
 2018/11/29に(svn的な意味で)コミットされています。
 
 [`[RISCV]` Implement codegen for cmpxchg on RV32IA](https://reviews.llvm.org/D48131)
 
 今後、このコミットが反映されたLLVMがRustで採用されれば、RISC-Vがターゲットでもspinやlazy_staticが使えそうです！
 それまでは、間に合せの方法で凌いでも良い気がしますね。
+
+## まとめ
+
+RISC-Vをターゲットに至高のプログラミングを行っていたところ、core::sync:atomic::Atomic*.compare_and_swap関数が実装されていない、というコンパイルエラーが発生し、使いたいspin crateが使えませんでした。
+RISC-V命令セットでは、compare and swap命令を直接サポートしていませんが、lr/sc命令を組み合わせることで、compare and swap命令の機能を実現することができます。
+
+調査を実施したところ、Rustのtarget tripleでRISC-V向けには、compare and swapをdisableする設定がされており、それに伴い、compare_and_swap関数が実装されないようになっていました。
+さらにLLVMの実装まで読み進めたところ、RISC-VをターゲットとするLLVMのコード生成部に、lr/sc命令を使ってcompare and swap命令を生成する処理が見つかりました。この処理は、2018/11/29に、パッチがコミット(svn的な意味で)されていることが判明しました。
+しばらく待てば、RISC-Vがターゲットでも、spin crateが使えそうであることがわかりました。
+
+最も重要なこととして、Rustの言語処理系を解析することが楽しいことが判明しました。
+**広げよう、Rust言語処理系リーディングの輪！**
 
 ## 参考
 
