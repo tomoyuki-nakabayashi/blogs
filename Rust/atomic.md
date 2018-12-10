@@ -886,6 +886,72 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 ; RV32IA-NEXT:    ret
 ```
 
+なんか長いですね。compare and swapはlr/scを使えば4命令で実現できるはずです。
+アセンブリを眺めてみると、何やらshiftとandを使ってデータの前処理をしているように見えます。
+というところでピーンと来ました。lr/scは、32bit単位の命令しかないため、byteやhalf wordをうまく処理できるような前処理が必要なはずです。
+32bitの方を見ると、すっきりしています。
+
+```
+; RV32IA-LABEL: cmpxchg_i32_monotonic_monotonic:
+; RV32IA:       # %bb.0:
+; RV32IA-NEXT:  .LBB20_1: # =>This Inner Loop Header: Depth=1
+; RV32IA-NEXT:    lr.w a3, (a0)
+; RV32IA-NEXT:    bne a3, a1, .LBB20_3
+; RV32IA-NEXT:  # %bb.2: # in Loop: Header=BB20_1 Depth=1
+; RV32IA-NEXT:    sc.w a4, a2, (a0)
+; RV32IA-NEXT:    bnez a4, .LBB20_1
+; RV32IA-NEXT:  .LBB20_3:
+; RV32IA-NEXT:    ret
+```
+
+compare and swapは、次のように定義されています。
+
+```cpp
+/// Compare and exchange
+
+class PseudoCmpXchg
+    : Pseudo<(outs GPR:$res, GPR:$scratch),
+             (ins GPR:$addr, GPR:$cmpval, GPR:$newval, i32imm:$ordering), []> {
+  let Constraints = "@earlyclobber $res,@earlyclobber $scratch";
+  let mayLoad = 1;
+  let mayStore = 1;
+  let hasSideEffects = 0;
+}
+
+// Ordering constants must be kept in sync with the AtomicOrdering enum in
+// AtomicOrdering.h.
+multiclass PseudoCmpXchgPat<string Op, Pseudo CmpXchgInst> {
+  def : Pat<(!cast<PatFrag>(Op#"_monotonic") GPR:$addr, GPR:$cmp, GPR:$new),
+            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 2)>;
+  def : Pat<(!cast<PatFrag>(Op#"_acquire") GPR:$addr, GPR:$cmp, GPR:$new),
+            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 4)>;
+  def : Pat<(!cast<PatFrag>(Op#"_release") GPR:$addr, GPR:$cmp, GPR:$new),
+            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 5)>;
+  def : Pat<(!cast<PatFrag>(Op#"_acq_rel") GPR:$addr, GPR:$cmp, GPR:$new),
+            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 6)>;
+  def : Pat<(!cast<PatFrag>(Op#"_seq_cst") GPR:$addr, GPR:$cmp, GPR:$new),
+            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 7)>;
+}
+
+def PseudoCmpXchg32 : PseudoCmpXchg;
+defm : PseudoCmpXchgPat<"atomic_cmp_swap_32", PseudoCmpXchg32>;
+
+def PseudoMaskedCmpXchg32
+    : Pseudo<(outs GPR:$res, GPR:$scratch),
+             (ins GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask,
+              i32imm:$ordering), []> {
+  let Constraints = "@earlyclobber $res,@earlyclobber $scratch";
+  let mayLoad = 1;
+  let mayStore = 1;
+  let hasSideEffects = 0;
+}
+
+def : Pat<(int_riscv_masked_cmpxchg_i32
+            GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask, imm:$ordering),
+          (PseudoMaskedCmpXchg32
+            GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask, imm:$ordering)>;
+```
+
 さて、ここまで見てくださった読者の皆様、何かおかしいと思いませんか？
 そう、**RISC-Vターゲットにcompare and swap命令、実装されているじゃん！** ということです。
 
