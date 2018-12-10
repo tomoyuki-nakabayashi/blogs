@@ -1,4 +1,4 @@
-# Rust Atomic compare and swap 2018 edition RISC-V仕立て〜LLVMを添えて〜
+# Rust Atomic compare and swap 2018 editionのRISC-Vソース〜LLVMを添えて〜
 
 ## はじめに
 
@@ -851,6 +851,39 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 
   return true;
 }
+```
+
+うーん、よくわからん！ということで、期待値を予測してみましょう。きっとどこかにテストコードがあるはずなので、探します。
+`test/CodeGen/RISCV/atomic-cmpxchg.ll`それっぽいものが見つかりました。
+
+```
+; RUN: llc -mtriple=riscv32 -mattr=+a -verify-machineinstrs < %s \
+; RUN:   | FileCheck -check-prefix=RV32IA %s
+...
+
+; RV32IA-LABEL: cmpxchg_i8_monotonic_monotonic:
+; RV32IA:       # %bb.0:
+; RV32IA-NEXT:    slli a3, a0, 3
+; RV32IA-NEXT:    andi a3, a3, 24
+; RV32IA-NEXT:    addi a4, zero, 255
+; RV32IA-NEXT:    sll a4, a4, a3
+; RV32IA-NEXT:    andi a2, a2, 255
+; RV32IA-NEXT:    sll a2, a2, a3
+; RV32IA-NEXT:    andi a1, a1, 255
+; RV32IA-NEXT:    sll a1, a1, a3
+; RV32IA-NEXT:    andi a0, a0, -4
+; RV32IA-NEXT:  .LBB0_1: # =>This Inner Loop Header: Depth=1
+; RV32IA-NEXT:    lr.w a3, (a0)
+; RV32IA-NEXT:    and a5, a3, a4
+; RV32IA-NEXT:    bne a5, a1, .LBB0_3
+; RV32IA-NEXT:  # %bb.2: # in Loop: Header=BB0_1 Depth=1
+; RV32IA-NEXT:    xor a5, a3, a2
+; RV32IA-NEXT:    and a5, a5, a4
+; RV32IA-NEXT:    xor a5, a3, a5
+; RV32IA-NEXT:    sc.w a5, a5, (a0)
+; RV32IA-NEXT:    bnez a5, .LBB0_1
+; RV32IA-NEXT:  .LBB0_3:
+; RV32IA-NEXT:    ret
 ```
 
 さて、ここまで見てくださった読者の皆様、何かおかしいと思いませんか？
