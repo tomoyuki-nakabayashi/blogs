@@ -3,7 +3,7 @@
 ## はじめに
 
 本記事は、[Rust Advent Calendar 2018](https://qiita.com/advent-calendar/2018/rust)の22日目として書かれました。
-タイトルは少しふざけていますが、内容は真剣です。ぜひ見ていって下さい。
+タイトルは少しふざけていますが、内容は真剣です。ぜひ楽しんでいって下さい。
 
 ### 事の発端あるいは茶番
 
@@ -40,30 +40,30 @@ error[E0599]: no method named `compare_and_swap` found for type `core::sync::ato
 ### この記事 is 何？
 
 Rust core libraryの`core::sync::atomic::Atomic*.compare_and_swap`関数を解析した経過と結果を記したものです。それ以外のことは出てきません。
-途中からLLVMに突入しますので、C++成分がそれなりに混じっています。
+途中からLLVMに突入しますので、C++成分がそれなりに混じっています。RISC-Vのアセンブリソースコードも少々あります。RISC-Vのアセンブリは難しくないので大丈夫です。
 
-今回、この記事に関わる調査を行ったおかげで、次の知見を得ることができました (私は言語処理系素人です)。
+今回、この記事に関わる調査を行ったおかげで、次の知見を得ることができました。
 
 - Rust target tripleの設定
 - rustc compilerとLLVMとの関係性を少し
 - LLVMのコード生成を少し
 
-一番大きかった収穫は、自分程度のレベルでも意外と読める、ということです。これは、コード自体の品質が高いこともありますが、コメントやテストコードが充実しているためです。自分自身でもこのようなリテラシーの高いコードを書いて行こう、という気持ちになれて、非常に良い刺激を得ることができました。
+一番大きかった収穫は、私は言語処理系素人ですが、意外と読める、ということです。これは、コード自体の品質が高いこともありますが、コメントやテストコードが充実しているためです。自分自身でもこのようなリテラシーの高いコードを書いて行こう、という気持ちになれて、非常に良い刺激を得ることができました。
 やりたいことができない、がスタート地点でしたが、結果として前よりもっとRustが好きになりました。
 
-つまり、この記事の趣旨は、**みんなに広めよう！Rust言語処理系リーディングの輪！** ということです。
+つまり、この記事の趣旨は、**広めよう！Rust言語処理系リーディングの輪！** ということです。
 
 以降、本記事は次の流れで展開します。
 
-1. compare and swapとは？
+1. プロセッサのAtomicなデータ更新 (compare and swapとは？)
 2. Rust core library解析
 3. rustc compiler解析
 4. LLVMコード生成部解析
 
 ## プロセッサのAtomicなデータ更新
 
-排他制御の一種です。近代のプロセッサでは、マルチスレッドにおいて、Atomicなメモリ操作が行えるロードストア命令が用意されています。
-[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)、に詳しく書かれています。以降のコード例で引用させて頂いています。
+排他制御の一種です。近代のプロセッサでは、マルチスレッドにおいて、Atomicなメモリ操作が行えるロードストア命令が用意されています (確かMIPS R3000とかにはなかったと思います)。
+[ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)、に詳しく書かれています。以降のコード例で引用させて頂いています。ありがとうございます。
 
 排他制御の必要性について、簡単に説明します。よく銀行取引の例をみかける、あれです。
 プロセッサレベルでも同様で、スレッドAとスレッドBが、共有メモリにアクセスする場合に、スレッドAがデータ更新している途中で、スレッドBがデータを更新してしまうと、データの整合性がなくなってしまいます。
@@ -76,14 +76,14 @@ Rust core libraryの`core::sync::atomic::Atomic*.compare_and_swap`関数を解�
 そこで、プロセッサではロックを使用せずに、Atomicな共有データアクセスをするための命令を備えています。
 この命令には、2つの方法があります。
 
-- compare and scap (cas)
+- compare and swap (cas)
 - load link/store condition (ll/sc)
 
 RISC-Vでは、ll/scではなく、load reserved/store conditional (lr/sc)というニーモニックになっています。
 
 ### compare and swap
 
-x86では`cmpxchg`という名前の命令です。x86のアセンブリを説明するのは大変なので、擬似コードで見ていきます([ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)からの引用)。
+x86では`cmpxchg`という名前の命令です。x86のアセンブリを説明するのは大変心が折れるので、C言語の擬似コードで見ていきます([ARMプロセッサにおけるロックフリーなデータ更新](https://qiita.com/RKX1209/items/7ba1e7d439cf28c92041)からの引用です)。
 あるメモリアドレス`ptr`の現在値が、古い値`old`と等しければ、新しい値`old`を`ptr`に書き込みます(古い値も新しい値もメモリ上にある)。新しい値を書き込んだ場合、`1`を返します。
 
 ```c
@@ -118,17 +118,17 @@ void AtomicOp(int *ptr)
 
 上記コードを説明します。あるアドレス`ptr`から、古い値`OldValue`を読み込み、新しい値`NewValue`を計算します。
 compare and swap命令では、`ptr`に格納されている値が`OldValue`と等しいときに、`NewValue`を`ptr`に書き込みます。`NewValue`を書き込んだ時、結果は`1`に、それ以外のときは`0`になります。
-compare and swap命令実行時、`ptr`に格納されている値が`OldValue`と等しい、ということは、`★1`から`★2`の間にデータが変更されていない、ということになります(実際は擬陽性の問題があります)。これは、他のスレッドから値が書き換えられていないことを意味します。
+compare and swap命令実行時、`ptr`に格納されている値が`OldValue`と等しい、ということは、`★1`から`★2`の間にデータが変更されていない、ということになります。これは、他のスレッドから値が書き換えられていないことを意味します。実際は擬陽性の問題があり、`OldValue⇨AnotherValue⇨OldValue`という変更があった場合に、検出できません。
 もし、データが書き換えられていた場合は、データ更新は行われず、もう1度`OldValue`を読み込むところからやり直します。
 
 ### ll/scまたはlr/sc
 
-ARMやRISC-Vがサポートしている命令です。こちらの命令では、ll/scというロードストア命令をペアで使います。
-ll命令で、「このアドレスのデータ、予約しとくわ」ということで、reservedフラグをつけておきます。sc命令で値を更新する際、「予約しといたアドレスのデータ、まだ予約されてる？されてるんやったら更新しといて！」ということをやります。
+ARMやRISC-Vがサポートしている命令です。こちらの命令では、ll (load link)/sc (store conditional)というロードストア命令をペアで使います。
+ll命令で、 **「このアドレスのデータ、予約しといて」** ということで、reservedフラグをつけておきます。sc命令で値を更新する際、 **「予約しといたアドレスのデータ、まだ予約されてる？されてるんやったら更新しといて！」** ということをやります。データが別スレッドにより更新されている場合は、 **「何ィ？予約しといて言うのに、他の人が触ったぁ！？じゃあ、もっかい予約するから、今度こそ取っといてな。頼むでほんま。」** となります。
 
 RISC-Vのlr/scについては、[RISC-V specifications](https://riscv.org/specifications/)の`7. "A" Standard Extension for Atomic Instructions, Version 2.0`に記載があります。
 
-RISC-V命令セットで、compare and swapではなくlr/scを採用する理由は、ABA問題と、必要となるオペランド数によるところが大きいです。
+RISC-V命令セットで、compare and swapではなくlr/scを採用する理由は、擬陽性(ABA)問題と、必要となるオペランド数によるところが大きいです。
 compare and swapでは、ソースオペランドが3つ必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
 これは、データパスを単純に保つ上で重要であるため、RISCプロセッサの選択として、納得のいくものです。
 
@@ -141,7 +141,7 @@ compare and swapでは、ソースオペランドが3つ必要になります。
 
 他2つの理由も併記されているので、興味がある方は、specificationをご参照下さい。
 
-lr/scを使って、compare and swap機能を実現する場合、次のようにします。
+lr/scを使って、compare and swap機能を実現する場合、次のようなアセンブラになります。
 
 ```asm
 # a0 holds address of memory location                  -> ptr
@@ -218,14 +218,17 @@ impl AtomicBool {
 
 いきなり重要なアトリビュートが見つかります。
 `#[cfg(target_has_atomic = "cas")]`、この部分ですね。`cas`は、compare_and_swapの略で、命令セットの記述で頻繁に用いられます。
-
-この`target_has_atomic`がどこでどのように定義されているか、を追いかける必要がありそうです。
+この`target_has_atomic`がどこでどのように定義されているか、を追いかけます。
 現在のRustでは、2つのRISC-Vアーキテクチャがサポートされています。
 
 [riscv32imc_unknown_none_elf.rs](https://github.com/rust-lang/rust/blob/master/src/librustc_target/spec/riscv32imc_unknown_none_elf.rs)
 [riscv32imac_unknown_none_elf.rs](https://github.com/rust-lang/rust/blob/master/src/librustc_target/spec/riscv32imac_unknown_none_elf.rs)
 
-1つは、Atomic命令をサポートしない`rv32imc`です。こちらをターゲットにする場合は、compare and swapがなくても納得です。
+余談ですが、RISC-Vでは、命令セットを任意の組み合わせで拡張できるようになっています。
+`rv32`は、32 bitアーキテクチャを意味しており、その後に、`i, m, a, c, f, d`といった、どのような命令をサポートしているか、の情報が続きます。
+i -> 整数、m -> 整数乗除算、a -> Atomic、c -> 16 bit圧縮命令、f -> 単精度浮動小数点、d -> 倍精度浮動小数点、といった感じです。
+
+Rustでサポートしている1つ目は、Atomic命令をサポートしない`rv32imc`です。こちらをターゲットにする場合は、compare and swapがなくても納得です。
 target tripleを見ても、`atomic_cas`が`false`になっています。
 
 ```rust
@@ -263,6 +266,18 @@ pub fn target() -> TargetResult {
 `atomic_cas: false`が`target_has_atomic = "cas"`に変換される過程も追いたいところですが、一旦先に進みましょう。
 
 compare_and_swap関数では、`compare_exchange`に処理を移譲して、その結果がOk/Err、どちらでもその中身を返しています。
+
+```rust
+    // 再掲載
+    #[cfg(target_has_atomic = "cas")]
+    pub fn compare_and_swap(&self, current: bool, new: bool, order: Ordering) -> bool {
+        match self.compare_exchange(current, new, order, strongest_failure_ordering(order)) {
+            Ok(x) => x,
+            Err(x) => x,
+        }
+    }
+```
+
 `compare_exchange`の中身に移ります。
 
 :libcore/sync/atomic.rs
@@ -318,6 +333,7 @@ unsafe fn atomic_compare_exchange<T>(dst: *mut T,
 }
 ```
 
+`Acquire`や`Release`を説明し始めると長くなってしまうので、省略させて下さい。
 compare and swapは、compare_exchangeを経て、`cxchg`と略されています。
 intrinsics、の意味を知らなかったので、google先生に聞いてみます。
 **本来備わっている、固有の、本質的な** という意味のようです。わかったような、わからないような気がするため、もう少し調べてみました。
