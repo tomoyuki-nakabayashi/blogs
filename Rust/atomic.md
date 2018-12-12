@@ -129,7 +129,7 @@ ll命令で、 **「このアドレスのデータ、予約しといて」** と
 RISC-Vのlr/scについては、[RISC-V specifications](https://riscv.org/specifications/)の`7. "A" Standard Extension for Atomic Instructions, Version 2.0`に記載があります。
 
 RISC-V命令セットで、compare and swapではなくlr/scを採用する理由は、擬陽性(ABA)問題と、必要となるオペランド数によるところが大きいです。
-compare and swapでは、ソースオペランドが3つ必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
+compare and swapでは、ソースオペランドが3つ(`ptr`, `OldValue`, `NewValue`)必要になります。それに対して、lr/scでは、2オースオペランドで済みます。
 これは、データパスを単純に保つ上で重要であるため、RISCプロセッサの選択として、納得のいくものです。
 
 > Both compare-and-swap (CAS) and LR/SC can be used to build lock-free data structures. After
@@ -333,7 +333,11 @@ unsafe fn atomic_compare_exchange<T>(dst: *mut T,
 }
 ```
 
-`Acquire`や`Release`を説明し始めると長くなってしまうので、省略させて下さい。
+`Acquire`や`Release`を説明し始めると長くなってしまうので、簡単な紹介だけに留めます。
+基本的な考え方は、どの程度ロードストア命令の順番入れ替えを許容するか、です。
+Acquire指定の命令を実行する際、後続のメモリアクセス命令は、Acquire指定の命令より先に実行することはできません。
+Release指定の命令の実行する際、先行のメモリアクセス命令は、Release指定の命令より後に実行することはできません。
+
 compare and swapは、compare_exchangeを経て、`cxchg`と略されています。
 intrinsics、の意味を知らなかったので、google先生に聞いてみます。
 **本来備わっている、固有の、本質的な** という意味のようです。わかったような、わからないような気がするため、もう少し調べてみました。
