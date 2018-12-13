@@ -649,6 +649,9 @@ MachineInstr *MI = BuildMI(MBB, DL, TII.get(X86::MOV32ri), DestReg).addImm(42);
 最終的なアセンブラを出力します。
 
 ということで、今回一番関連がありそうなのは、`MachineInstr`への変換あたりと考えられます。
+
+## Dive into the RISC-V CodeGen
+
 改めて、[RISCVExpandPseudoInsts.cpp](https://github.com/llvm-mirror/llvm/blob/master/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp)を見ていきましょう。
 まず、こいつが何をしそうか、をincludeしているファイルから推測します。
 
@@ -780,26 +783,7 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
     int Width, MachineBasicBlock::iterator &NextMBBI) {
   assert(Width == 32 && "RV64 atomic expansion currently unsupported");
   MachineInstr &MI = *MBBI;
-  DebugLoc DL = MI.getDebugLoc();
-  MachineFunction *MF = MBB.getParent();
-  auto LoopHeadMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
-  auto LoopTailMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
-  auto DoneMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
-
-  // Insert new MBBs.
-  MF->insert(++MBB.getIterator(), LoopHeadMBB);
-  MF->insert(++LoopHeadMBB->getIterator(), LoopTailMBB);
-  MF->insert(++LoopTailMBB->getIterator(), DoneMBB);
-
-  // Set up successors and transfer remaining instructions to DoneMBB.
-  LoopHeadMBB->addSuccessor(LoopTailMBB);
-  LoopHeadMBB->addSuccessor(DoneMBB);
-  LoopTailMBB->addSuccessor(DoneMBB);
-  LoopTailMBB->addSuccessor(LoopHeadMBB);
-  DoneMBB->splice(DoneMBB->end(), &MBB, MI, MBB.end());
-  DoneMBB->transferSuccessors(&MBB);
-  MBB.addSuccessor(LoopHeadMBB);
-
+...
   unsigned DestReg = MI.getOperand(0).getReg();
   unsigned ScratchReg = MI.getOperand(1).getReg();
   unsigned AddrReg = MI.getOperand(2).getReg();
@@ -828,39 +812,72 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
         .addReg(ScratchReg)
         .addReg(RISCV::X0)
         .addMBB(LoopHeadMBB);
-  } else {
-    // .loophead:
-    //   lr.w dest, (addr)
-    //   and scratch, dest, mask
-    //   bne scratch, cmpval, done
-    unsigned MaskReg = MI.getOperand(5).getReg();
-    BuildMI(LoopHeadMBB, DL, TII->get(getLRForRMW32(Ordering)), DestReg)
-        .addReg(AddrReg);
-    BuildMI(LoopHeadMBB, DL, TII->get(RISCV::AND), ScratchReg)
-        .addReg(DestReg)
-        .addReg(MaskReg);
-    BuildMI(LoopHeadMBB, DL, TII->get(RISCV::BNE))
-        .addReg(ScratchReg)
-        .addReg(CmpValReg)
-        .addMBB(DoneMBB);
-
-    // .looptail:
-    //   xor scratch, dest, newval
-    //   and scratch, scratch, mask
-    //   xor scratch, dest, scratch
-    //   sc.w scratch, scratch, (adrr)
-    //   bnez scratch, loophead
-    insertMaskedMerge(TII, DL, LoopTailMBB, ScratchReg, DestReg, NewValReg,
-                      MaskReg, ScratchReg);
-    BuildMI(LoopTailMBB, DL, TII->get(getSCForRMW32(Ordering)), ScratchReg)
-        .addReg(AddrReg)
-        .addReg(ScratchReg);
-    BuildMI(LoopTailMBB, DL, TII->get(RISCV::BNE))
-        .addReg(ScratchReg)
-        .addReg(RISCV::X0)
-        .addMBB(LoopHeadMBB);
+  } else { // isMasked
+...
   }
 
+  NextMBBI = MBB.end();
+  MI.eraseFromParent();
+...
+  return true;
+}
+```
+
+コメントから、次のような機械語命令に展開されることがわかります。
+
+```
+.loophead:
+    lr.w dest, (addr)
+    bne dest, cmpval, done
+.looptail:
+    sc.w scratch, newval, (addr)
+    bnez scratch, loophead
+```
+
+`MBB (MachineBasicBlock)`に、BuildMIで命令を作成して、必要なレジスタ情報を追加している、という流れに見えます。
+RISC-V specificationにあった命令列は、下の通りなので、忠実に展開されていそうです。
+
+```asm
+cas:
+    lr.w t0, (a0)     # Load original value.
+    bne t0, a1, fail  # Doesn’t match, so fail.
+    sc.w a0, a2, (a0) # Try to update.
+    bnez a0, cas      # Retry if store-conditional failed.
+    jr ra # Return.
+fail:
+    li a0, 1          # Set return to failure.
+    jr ra # Return.
+```
+
+上記の`RISCVExpandPseudo::expandAtomicCmpXchg`からは省略しましたが、MBBの関係は、同関数内で定義されています。
+
+`previous -> MI (cmpxchg) -> next`という命令ブロック構造を、`previous -> LoopHeadMBB -> LoopTailMBB -> DoneMBB -> next`に作り直している、ということ？
+
+```cpp
+bool RISCVExpandPseudo::expandAtomicCmpXchg(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI, bool IsMasked,
+    int Width, MachineBasicBlock::iterator &NextMBBI) {
+  MachineInstr &MI = *MBBI;
+  DebugLoc DL = MI.getDebugLoc();
+  MachineFunction *MF = MBB.getParent();
+  auto LoopHeadMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+  auto LoopTailMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+  auto DoneMBB = MF->CreateMachineBasicBlock(MBB.getBasicBlock());
+
+  // Insert new MBBs.
+  MF->insert(++MBB.getIterator(), LoopHeadMBB);
+  MF->insert(++LoopHeadMBB->getIterator(), LoopTailMBB);
+  MF->insert(++LoopTailMBB->getIterator(), DoneMBB);
+
+  // Set up successors and transfer remaining instructions to DoneMBB.
+  LoopHeadMBB->addSuccessor(LoopTailMBB);
+  LoopHeadMBB->addSuccessor(DoneMBB);
+  LoopTailMBB->addSuccessor(DoneMBB);
+  LoopTailMBB->addSuccessor(LoopHeadMBB);
+  DoneMBB->splice(DoneMBB->end(), &MBB, MI, MBB.end());
+  DoneMBB->transferSuccessors(&MBB);
+  MBB.addSuccessor(LoopHeadMBB);
+...
   NextMBBI = MBB.end();
   MI.eraseFromParent();
 
@@ -868,60 +885,6 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
   computeAndAddLiveIns(LiveRegs, *LoopHeadMBB);
   computeAndAddLiveIns(LiveRegs, *LoopTailMBB);
   computeAndAddLiveIns(LiveRegs, *DoneMBB);
-
-  return true;
-}
-```
-
-うーん、よくわからん！ということで、期待値を予測してみましょう。きっとどこかにテストコードがあるはずなので、探します。
-`test/CodeGen/RISCV/atomic-cmpxchg.ll`それっぽいものが見つかりました。
-
-```
-; RUN: llc -mtriple=riscv32 -mattr=+a -verify-machineinstrs < %s \
-; RUN:   | FileCheck -check-prefix=RV32IA %s
-...
-
-; RV32IA-LABEL: cmpxchg_i8_monotonic_monotonic:
-; RV32IA:       # %bb.0:
-; RV32IA-NEXT:    slli a3, a0, 3
-; RV32IA-NEXT:    andi a3, a3, 24
-; RV32IA-NEXT:    addi a4, zero, 255
-; RV32IA-NEXT:    sll a4, a4, a3
-; RV32IA-NEXT:    andi a2, a2, 255
-; RV32IA-NEXT:    sll a2, a2, a3
-; RV32IA-NEXT:    andi a1, a1, 255
-; RV32IA-NEXT:    sll a1, a1, a3
-; RV32IA-NEXT:    andi a0, a0, -4
-; RV32IA-NEXT:  .LBB0_1: # =>This Inner Loop Header: Depth=1
-; RV32IA-NEXT:    lr.w a3, (a0)
-; RV32IA-NEXT:    and a5, a3, a4
-; RV32IA-NEXT:    bne a5, a1, .LBB0_3
-; RV32IA-NEXT:  # %bb.2: # in Loop: Header=BB0_1 Depth=1
-; RV32IA-NEXT:    xor a5, a3, a2
-; RV32IA-NEXT:    and a5, a5, a4
-; RV32IA-NEXT:    xor a5, a3, a5
-; RV32IA-NEXT:    sc.w a5, a5, (a0)
-; RV32IA-NEXT:    bnez a5, .LBB0_1
-; RV32IA-NEXT:  .LBB0_3:
-; RV32IA-NEXT:    ret
-```
-
-なんか長いですね。compare and swapはlr/scを使えば4命令で実現できるはずです。
-アセンブリを眺めてみると、何やらshiftとandを使ってデータの前処理をしているように見えます。
-というところでピーンと来ました。lr/scは、32bit単位の命令しかないため、byteやhalf wordをうまく処理できるような前処理が必要なはずです。
-32bitの方を見ると、すっきりしています。
-
-```
-; RV32IA-LABEL: cmpxchg_i32_monotonic_monotonic:
-; RV32IA:       # %bb.0:
-; RV32IA-NEXT:  .LBB20_1: # =>This Inner Loop Header: Depth=1
-; RV32IA-NEXT:    lr.w a3, (a0)
-; RV32IA-NEXT:    bne a3, a1, .LBB20_3
-; RV32IA-NEXT:  # %bb.2: # in Loop: Header=BB20_1 Depth=1
-; RV32IA-NEXT:    sc.w a4, a2, (a0)
-; RV32IA-NEXT:    bnez a4, .LBB20_1
-; RV32IA-NEXT:  .LBB20_3:
-; RV32IA-NEXT:    ret
 ```
 
 compare and swapは、次のように定義されています。
