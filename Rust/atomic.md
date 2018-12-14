@@ -390,7 +390,7 @@ externされているだけなので、FFIっぽいな、と思いましたが�
 
 ということで、次はrustcです。
 
-## Dive into the rustc compiler
+## Dive into the Rust compiler
 
 `src/librustc_codegen_llvm/intrinsic.rs`
 
@@ -648,6 +648,10 @@ MachineInstr *MI = BuildMI(MBB, DL, TII.get(X86::MOV32ri), DestReg).addImm(42);
 
 最終的なアセンブラを出力します。
 
+より、詳細な内容は、FPGA開発日記にてまとめられています。
+[FPGA開発日記 "Creating an LLVM Backend for the Cpu0 Architecture"をやってみる(4. Cpu0 Architecture and LLVM Structure)](http://msyksphinz.hatenablog.com/entry/2018/12/13/040000)
+[FPGA開発日記 "Creating an LLVM Backend for the Cpu0 Architecture"をやってみる(5. Cpu0 Architecture and LLVM Structure 続き)](http://msyksphinz.hatenablog.com/entry/2018/12/14/040100)
+
 ということで、今回一番関連がありそうなのは、`MachineInstr`への変換あたりと考えられます。
 
 ## Dive into the RISC-V CodeGen
@@ -823,7 +827,7 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
 }
 ```
 
-コメントから、次のような機械語命令に展開されることがわかります。
+コメントから、上記コードにより、次のような機械語命令に展開されることがわかります。
 
 ```
 .loophead:
@@ -850,8 +854,7 @@ fail:
 ```
 
 上記の`RISCVExpandPseudo::expandAtomicCmpXchg`からは省略しましたが、MBBの関係は、同関数内で定義されています。
-
-`previous -> MI (cmpxchg) -> next`という命令ブロック構造を、`previous -> LoopHeadMBB -> LoopTailMBB -> DoneMBB -> next`に作り直している、ということ？
+`previous -> MI (cmpxchg) -> next`という命令ブロック構造を、`previous -> LoopHeadMBB -> LoopTailMBB -> DoneMBB -> next`に作り直している、ということかな、と解釈しています。
 
 ```cpp
 bool RISCVExpandPseudo::expandAtomicCmpXchg(
@@ -887,56 +890,10 @@ bool RISCVExpandPseudo::expandAtomicCmpXchg(
   computeAndAddLiveIns(LiveRegs, *DoneMBB);
 ```
 
-compare and swapは、次のように定義されています。
-
-```cpp
-/// Compare and exchange
-
-class PseudoCmpXchg
-    : Pseudo<(outs GPR:$res, GPR:$scratch),
-             (ins GPR:$addr, GPR:$cmpval, GPR:$newval, i32imm:$ordering), []> {
-  let Constraints = "@earlyclobber $res,@earlyclobber $scratch";
-  let mayLoad = 1;
-  let mayStore = 1;
-  let hasSideEffects = 0;
-}
-
-// Ordering constants must be kept in sync with the AtomicOrdering enum in
-// AtomicOrdering.h.
-multiclass PseudoCmpXchgPat<string Op, Pseudo CmpXchgInst> {
-  def : Pat<(!cast<PatFrag>(Op#"_monotonic") GPR:$addr, GPR:$cmp, GPR:$new),
-            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 2)>;
-  def : Pat<(!cast<PatFrag>(Op#"_acquire") GPR:$addr, GPR:$cmp, GPR:$new),
-            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 4)>;
-  def : Pat<(!cast<PatFrag>(Op#"_release") GPR:$addr, GPR:$cmp, GPR:$new),
-            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 5)>;
-  def : Pat<(!cast<PatFrag>(Op#"_acq_rel") GPR:$addr, GPR:$cmp, GPR:$new),
-            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 6)>;
-  def : Pat<(!cast<PatFrag>(Op#"_seq_cst") GPR:$addr, GPR:$cmp, GPR:$new),
-            (CmpXchgInst GPR:$addr, GPR:$cmp, GPR:$new, 7)>;
-}
-
-def PseudoCmpXchg32 : PseudoCmpXchg;
-defm : PseudoCmpXchgPat<"atomic_cmp_swap_32", PseudoCmpXchg32>;
-
-def PseudoMaskedCmpXchg32
-    : Pseudo<(outs GPR:$res, GPR:$scratch),
-             (ins GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask,
-              i32imm:$ordering), []> {
-  let Constraints = "@earlyclobber $res,@earlyclobber $scratch";
-  let mayLoad = 1;
-  let mayStore = 1;
-  let hasSideEffects = 0;
-}
-
-def : Pat<(int_riscv_masked_cmpxchg_i32
-            GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask, imm:$ordering),
-          (PseudoMaskedCmpXchg32
-            GPR:$addr, GPR:$cmpval, GPR:$newval, GPR:$mask, imm:$ordering)>;
-```
+ここまでの解析により、Rust compilerでLLVM IRのcmpxchgが生成されるまでの流れ、および、LLVM IRのcmpxchgがRISC-V機械語命令に展開される処理が、なんとなくわかった気になりました。
 
 さて、ここまで見てくださった読者の皆様、何かおかしいと思いませんか？
-そう、**RISC-Vターゲットにcompare and swap命令、実装されているじゃん！** ということです。
+そう、**LLVMには、RISC-Vターゲットのcompare and swap命令、実装されているじゃん！** ということです。
 
 実はこのLLVMのコードは、2018/12月初旬に、LLVMのmaster branchから持ってきています。
 
