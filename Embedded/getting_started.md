@@ -588,10 +588,10 @@ objcopyの後にさらになんかやってるんだよな。
 Zephyrのリンカスクリプトがずれている説？
 最終的に、`linker_pass_final.cmd`でリンクするみたい。
 
-FLASHを`0x1000`から始めるようにしたらLEDが光った。
+`linker.cmd`と`linker_pass_final.cmd`を修正して、FLASHを`0x1000`から始めるようにしたらLEDが光った。
 
 ```
-$ head -n 10 linker_pass_fi
+$ head -n 10 linker_pass_final.cmd
 nal.cmd
  OUTPUT_FORMAT("elf32-littlearm")
 _region_min_align = 32;
