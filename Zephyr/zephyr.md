@@ -8,29 +8,9 @@
 Intel, Nordic, NXPがプラチナスポンサー。
 SiFive, TI, Synopsysがシルバースポンサー。
 
-アーキテクチャサポート
+OSのソースコードリーディングする分には、Linuxよりかなりハードルが低い。
 
-> ARM Cortex-M, Intel x86, ARC, Nios II, Tensilica Xtensa, and RISC-V
-
-ボードサポート
-
-[Zephyr Supported Boards](https://docs.zephyrproject.org/latest/boards/boards.html)
-
-よく見ると、[Zedborad Pulpino](https://docs.zephyrproject.org/latest/boards/riscv32/zedboard_pulpino/doc/zedboard_pulpino.html)のサポートがある。
-Zedboard (6万円くらい)あれば、FPGAにRISC-V構築して、Zephyr動かせるよ！
-
-ビルドツールなどがモダン
-
-- cmake + ninja
-- テストがあって、カバレッジ測定している
-  - マージ時にカバレッジレポートが上がってくるようになっている
-- yamlで書かれた設定ファイルが随所にある
-  - コンパイル時にpythonで解析して、ヘッダファイル作ったりしている
-- ドキュメントはSphinx
-
-デバイスの記述方法
-
-- device tree
+### 起源
 
 あ、VxWorksのmicrokernelからforkしているんだ？
 
@@ -50,14 +30,41 @@ Date:   Fri Apr 10 16:44:37 2015 -0700
     Signed-off-by:  <inaky.perez-gonzalez@intel.com>
 ```
 
-OSのソースコードリーディングする分には、Linuxよりかなりハードルが低い。
+### アーキテクチャサポート
+
+> ARM Cortex-M, Intel x86, ARC, Nios II, Tensilica Xtensa, and RISC-V
+
+### ボードサポート
+
+[Zephyr Supported Boards](https://docs.zephyrproject.org/latest/boards/boards.html)
+
+よく見ると、[Zedborad Pulpino](https://docs.zephyrproject.org/latest/boards/riscv32/zedboard_pulpino/doc/zedboard_pulpino.html)のサポートがある。
+Zedboard (6万円くらい)あれば、FPGAにRISC-V構築して、Zephyr動かせるよ！
+
+### ビルドツール
+
+モダンです。
+
+- cmake + ninja
+- テストがあって、カバレッジ測定している
+  - マージ時にカバレッジレポートが上がってくるようになっている
+- yamlで書かれた設定ファイルが随所にある
+  - コンパイル時にpythonで解析して、ヘッダファイル作ったりしている
+- ドキュメントはSphinx
+
+### デバイス記述方法
+
+Linuxと同様にdevice treeを使用します。
+ただし、内部での使い方はかなり異なります。
+
+### 特徴
 
 [Zephyr Doc Introduction](https://docs.zephyrproject.org/latest/introduction/introducing_zephyr.html)から、気になった機能を紹介します。
 
 > Device Tree Support
 > Use of Device Tree (DTS) to describe hardware and configuration information for boards. The DTS information will be used only during compile time. Information about the system is extracted from the compiled DTS and used to create the application image.
 
-Linuxと違って、コンパイル時にだけ情報を抜き出して、使用するみたいですね。
+Linuxと違って、コンパイル時にだけ情報を抜き出して、使用するみたいです。
 driverのロードを動的にやったりしないでしょうから、妥当な感じがします。
 
 > Native Linux, macOS, and Windows Development
@@ -78,7 +85,7 @@ QEMUもインストールする。
 sudo apt install qemu-system-arm
 ```
 
-`~/.zephyrrc`に、ツールチェイン環境変数を設定しておく。
+`~/.zephyrrc`に、ビルドツールチェイン環境変数を設定しておく。
 例えば、次のような感じ。
 
 ```
@@ -300,11 +307,12 @@ Program Headers:
 
 ## 軽くソース解析
 
-`zephyr-v1.13.0`を解析します。
+masterの`0906a51`を解析します。
+1.13と比較するとトップレベルのディレクトリ構造が変化していました。
 
 ### 全体像
 
-ディレクトリ構造は、Linuxｔ比較するとシンプルです。
+ディレクトリ構造は、Linuxと比較するとシンプルです。
 `boards`とか`soc`とか`dts`とかがトップレベルにあるのが、組込みっぽさを醸し出しています。
 
 ```
@@ -356,6 +364,27 @@ mainmenu "Zephyr Kernel Configuration"
 source "Kconfig.zephyr"
 ```
 
+scripts下を見ると大量のpythonファイルがあります。
+
+```
+$ ls scripts/
+checkpatch         coccicheck               gen_relocate_app.py
+ci                 dir_is_writeable.py      gen_syscall_header.py
+coccinelle         elf_helper.py            gen_syscalls.py
+cross_compiler     file2hex.py              mergehex.py
+dts                filter-known-issues.py   parse_syscalls.py
+footprint          gen_alignment_script.py  process_gperf.py
+gitlint            gen_app_partitions.py    qemu-machine-hack.py
+kconfig            gen_cfb_font_header.py   requirements.txt
+meta               gen_gcov_files.py        sanitycheck
+__pycache__        gen_gdt.py               spelling.txt
+sanity_chk         gen_idt.py               subfolder_list.py
+support            gen_kobject_list.py      tags.sh
+check_link_map.py  gen_mmu_x86.py           valgrind.supp
+checkpatch.pl      gen_offset_header.py     waitpid
+checkstack.pl      gen_priv_stacks.py       west
+```
+
 ### Sample application解析
 
 `zephyr/samples/hello_world/src/main.c`
@@ -399,8 +428,7 @@ tests:
 ```
 
 platformsで、ビルド可能なプラットフォームを指定できるようです。`harness`とかこのあたりは、何でしょうね？
-
-
+まだ、謎は多いです。
 
 ## Device Driver
 
@@ -410,7 +438,7 @@ platformsで、ビルド可能なプラットフォームを指定できるよ�
 
 ### Driver Data Structures
 
-driverのデータ構造は、実行時に変更可能な`device`と、読み込み専用の`device_config`とにわかれています。
+driverのデータ構造は、実行時に変更可能な`device`と、読み込み専用の`device_config`とに別れるようです。
 
 ```c
 struct device {
@@ -435,26 +463,25 @@ struct device_config {
 
 device tree sourceをコンパイルした後、pythonスクリプトでyamlファイルのルールに則って情報を抜き出し、ヘッダファイルを作るようです。
 
-`zephyr/dts/bindings/serial/nordic.nrf-uart.yaml`
+Zephyrのdevice tree bindingは、yamlファイルで定義されており、ドキュメントを兼ねているようです。地味に良いです。
+UARTの例を示します。
+
+`zephyr/dts/bindings/serial/ti,stellaris-uart.yaml`
 
 ```yaml
 ---
-title: Nordic UART
-id: nordic,nrf-uart
+title: TI Stellaris UART
 version: 0.1
 
 description: >
-    This binding gives a base representation of the Nordic UART
+    This binding gives a base representation of the TI Stellaris UART
 
 inherits:
     !include uart.yaml
 
 properties:
     compatible:
-      type: string
-      category: required
-      description: compatible strings
-      constraint: "nordic,nrf-uart"
+      constraint: "ti,stellaris-uart"
 
     reg:
       type: array
@@ -467,6 +494,148 @@ properties:
       category: required
       description: required interrupts
       generation: define
+...
+```
+
+`uart.yaml`をinheritしています。
+`uart.yaml`はuartデバイスに共通のプロパティが定義されています。
+
+```yaml
+---
+title: Uart Base Structure
+version: 0.1
+
+description: >
+    This binding gives the base structures for all UART devices
+
+child:
+    bus: uart
+
+properties:
+    compatible:
+      type: string
+      category: required
+      description: compatible strings
+      generation: define
+...
+    current-speed:
+      type: int
+      category: required
+      description: Initial baud rate setting for UART
+      generation: define
+...
+```
+
+`current-speed`はUARTのボーレートですね。この後順番に見ていきます。
+
+device tree sourceは、2つに分割されています。複数のボードで共通して使えるものは、`dts`下に置きます。
+`zephyr/dts/arm/ti/lm3s6965.dtsi`
+
+```
+#include <arm/armv7-m.dtsi>
+
+/ {
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-m3";
+			reg = <0>;
+		};
+	};
+...
+	soc {
+		uart0: uart@4000c000 {
+			compatible = "ti,stellaris-uart";
+			reg = <0x4000c000 0x4c>;
+			interrupts = <5 3>;
+			status = "disabled";
+			label = "UART_0";
+		};
+...
+```
+
+ボード固有の設定は、`board`下に置きます。
+`boards/arm/qemu_cortex_m3/qemu_cortex_m3.dts`
+
+```
+/dts-v1/;
+
+#include <ti/lm3s6965.dtsi>
+
+/ {
+	model = "QEMU Cortex-M3";
+	compatible = "ti,lm3s6965evb-qemu", "ti,lm3s6965";
+...
+&uart0 {
+	status = "ok";
+	current-speed = <115200>;
+};
+...
+```
+
+uart0を有効にして、ボーレートは115200に設定しています。
+
+driverでどのようにプロパティが使われているか、見てみます。
+`zephyr/drivers/serial/uart_stellaris.c`
+
+```c
+static struct uart_stellaris_dev_data_t uart_stellaris_dev_data_0 = {
+	.baud_rate = DT_TI_STELLARIS_UART_4000C000_CURRENT_SPEED,
+};
+```
+
+一見、知っていないと分からないのですが、上のマクロが、device treeで設定したボーレートです。
+device tree sourceからマクロの設定値を生成します。
+
+上記の例では、例えば`CONFIG_UART_0_BAUD_RATE`は
+
+dtsから生成されたヘッダファイルです。一度アプリケーションをビルドすると入手できます。
+`build/zephyr/include/generated/generated_dts_board.h`
+
+`DT_`のプレフィックスが付いているものを、device treeから生成しているようです。
+上のdriverで使用されていた、`DT_TI_STELLARIS_UART_4000C000_CURRENT_SPEED`も定義されていますね。
+
+```c
+/**************************************************
+ * Generated include file for ti,lm3s6965evb-qemu
+ *               DO NOT MODIFY
+ */
+
+#ifndef DEVICE_TREE_BOARD_H
+#define DEVICE_TREE_BOARD_H
+...
+/* uart@4000c000 */
+#define CONFIG_UART_CONSOLE_ON_DEV_NAME                 "UART_0"
+#define CONFIG_UART_SHELL_ON_DEV_NAME                   "UART_0"
+#define DT_TI_STELLARIS_UART_0                          1
+#define DT_TI_STELLARIS_UART_4000C000_BASE_ADDRESS      0x4000c000
+#define DT_TI_STELLARIS_UART_4000C000_CURRENT_SPEED     115200  // これ
+#define DT_TI_STELLARIS_UART_4000C000_IRQ_0             5
+#define DT_TI_STELLARIS_UART_4000C000_IRQ_0_PRIORITY    3
+#define DT_TI_STELLARIS_UART_4000C000_LABEL             "UART_0"
+#define DT_TI_STELLARIS_UART_4000C000_SIZE              76
+...
+```
+
+また、device tree sourceから生成したヘッダファイルの設定値を取り込むために、fixupファイルが用意されています。
+
+> Fixup files contain mappings from existing Kconfig options to the actual underlying DTS derived configuration #defines. Fixup files are temporary artifacts until additional DTS changes are made to make them unnecessary.
+
+fixupファイルは、Kconfigのオプション値をdevice tree sourceから生成したマクロにマッピングしたり、マクロ名をリネームするのに使うようです。
+リネームしている使用方法しか見つかりませんでした。
+
+`zephyr/soc/arm/ti_lm3s6965/dts_fixup.h`
+
+```c
+/* SoC level DTS fixup file */
+...
+#define DT_GPIO_A_BASE_ADDRESS  DT_TI_STELLARIS_GPIO_40004000_BASE_ADDRESS
+#define DT_GPIO_A_LABEL         DT_TI_STELLARIS_GPIO_40004000_LABEL
+#define DT_GPIO_A_IRQ           DT_TI_STELLARIS_GPIO_40004000_IRQ_0
+#define DT_GPIO_A_IRQ_PRIO      DT_TI_STELLARIS_GPIO_40004000_IRQ_0_PRIORITY
 ...
 ```
 
