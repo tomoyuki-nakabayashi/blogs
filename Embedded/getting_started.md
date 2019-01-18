@@ -533,7 +533,7 @@ Program Headers:
 
 専用の手順があるのかな。
 
-[pca10059: add bootloader documentation](https://github.com/zephyrproject-rtos/zephyr/pull/11002)
+[pca10059: add bootloader documentation](https://github.com/zephyrproject-rtos/zephyr/pull/11002)  
 [nRF52840 Dongle Programming Tutorial](https://devzone.nordicsemi.com/tutorials/b/getting-started/posts/nrf52840-dongle-programming-tutorial)
 
 動かぬ。
