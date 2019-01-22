@@ -1,4 +1,4 @@
-# nRF52840
+# nRF52840 Dongle
 
 ## specification
 
@@ -8,16 +8,26 @@
 - RAM: 256kB
   - 0x2000_0000 - 0x2003_8000
 
-![memory_map](./images/memory_map.png)
+ボードの型番は`pca10059`。nRF52840 DKは`pca10056`なのでドキュメントや設定ファイルを触る際は注意が必要。
+
+どちらも、nRF52840のSoCを使っている。
+
+## Tutorial
+
+nRF52840 Dongleを動かす手順は、下のチュートリアルが詳しい。
+
+[nRF52840 Dongle Programming Tutorial](https://devzone.nordicsemi.com/tutorials/b/getting-started/posts/nrf52840-dongle-programming-tutorial)
+
+> The MBR occupies the first flash page (address 0 - 0xFFF) and also reserves the lowest 8 bytes of RAM (0x20000000 - 0x20000007) for interrupt forwarding. The MBRs primary responsibility is to support safe upgrades of the bootloader. The MBR itself is never updated.
+
+Flashメモリの先頭4KBはMBR領域となっている。
 
 ## Minimum requirements
 
 [nRF Connect for Desktop](https://www.nordicsemi.com/Software-and-Tools/Development-Tools/nRF-Connect-for-desktop)
 
-これで、接続できるらしい。
-
-OSSなんだ。
-[pc-nrfconnect-programmer](https://github.com/NordicSemiconductor/pc-nrfconnect-programmer)
+これの`Programmer`でGUIからFlashの書き込みができる。最初はこちらで書き込みを試すと良い。
+コマンドラインツールもあり、慣れてくると便利だが、少しとっつきにくい。
 
 ## Getting started
 
@@ -30,20 +40,12 @@ $ chmod +x nrfconnect260x8664.AppImage
 $ ./nrfconnect260x8664.AppImage
 ```
 
-`Add/remove apps`で`Getting Started Assistant`と`Programmer`をインストールしてみる。
-
-![nrfconnect_top](./images/nrf_connect_top.png)
+`Add/remove apps`で`Programmer`をインストールする。
 
 `Launch app`で`Programmer`を起動する。
 
-![nrfconnect_no_device](./images/nrf_no_device.png)
-
 デバイスがないと、怒られる。そら、挿してないからね。
-
-デバイスを挿す。
-
-![libusb_error](./images/libusb_error.png)
-
+デバイスを挿すとエラーが発生した。
 リロードしてみる。
 
 ```
@@ -52,9 +54,7 @@ $ ./nrfconnect260x8664.AppImage
 ```
 
 udevを設定しろ、とのこと。
-
 書かれている通り、[nrf-udev](https://github.com/NordicSemiconductor/nrf-udev)に行ってみる。
-
 debianはパッケージが用意されている。
 
 ```
@@ -84,11 +84,9 @@ KERNEL=="ttyACM[0-9]*", SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1
 LABEL="nrf_rules_end"
 ```
 
-ドングルを挿しなおして、Programmerをリロードする。
+どうも対象のUSBが挿入されると、`/dev/ttyACMx`が生えるみたい。
 
-![success_boot](./images/success_boot.png)
-
-OK!
+ドングルを挿しなおして、Programmerをリロードするとデバイスが選択できるようになる。
 
 ### Getting started
 
@@ -154,11 +152,13 @@ sudo apt-get install make
 sudo apt-get install gcc-multilib
 ```
 
-armツールチェイン。Xilinxのしか入っていないので一応。
+armツールチェイン。
 
 ```
 wget https://developer.arm.com/-/media/Files/downloads/gnu-rm/8-2018q4/gcc-arm-none-eabi-8-2018-q4-major-linux.tar.bz2?revision=d830f9dd-cd4f-406d-8672-cca9210dd220?product=GNU%20Arm%20Embedded%20Toolchain,64-bit,,Linux,8-2018-q4-major
 ```
+
+何か手順を飛ばしてしまったのか、別PCでやると、次の2つも必要だった。
 
 ```
 sudo apt install libusb-1.0.0-dev
@@ -184,25 +184,15 @@ cd <sourcecode_root>/ncs/nrf ; git checkout tags/v0.3.0
 cd <sourcecode_root>/ncs/nrfxlib ; git checkout tags/v0.3.0
 ```
 
+Zephyrのビルド準備をする。
+
 ```
 cd <sourcecode_root>/ncs
 pip3 install --user -r zephyr/scripts/requirements.txt
 pip3 install --user -r nrf/scripts/requirements.txt
 ```
 
-#### Download SEGGER Embedded Studio
-
-```
-wget http://segger.com/downloads/embedded-studio/embeddedstudio_arm_nordic_linux_x64
-```
-
-zepyhrのsampleを選択してビルドするとelfやhexができた。
-
-#### Program to flash
-
-hexファイル読み込んで書き込もうとしたが、`Write`ボタンが選択できない。
-
-`nrfutil`をインストールしてみよう。
+コマンドラインツールの`nrfutil`をインストールしておく。後々使用する。
 
 https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.tools%2Fdita%2Ftools%2Fnrfutil%2Fnrfutil_installing_from_pypi.html
 
@@ -210,7 +200,7 @@ https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.tools
 pip install nrfutil
 ```
 
-コマンドでやると書き込めそう？
+helpを見てみる。
 
 ```
 $ nrfutil dfu usb-serial --help
@@ -233,119 +223,109 @@ Options:
   --help                          Show this message and exit.
 ```
 
-まず、packageとやらを作ろう。
+まず、packageを作って、dfuで書き込むらしい。
+
+## nRF SDK example
+
+SDKのサンプルを動かしてみる。
 
 ```
-$ nrfutil pkg generate -
--debug-mode --hw-version 52 --sd-req 0x80 --application zephyr.hex zephyr_dfu_pkg.zip
-
-|===============================================================|
-|##      ##    ###    ########  ##    ## #### ##    ##  ######  |
-|##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ## |
-|##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##       |
-|##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####|
-|##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ## |
-|##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ## |
-| ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######  |
-|===============================================================|
-|You are generating a package with the debug bit enabled in the |
-|init packet. This is only compatible with a debug bootloader   |
-|and is not suitable for production.                            |
-|===============================================================|
-
-
-|===============================================================|
-|##      ##    ###    ########  ##    ## #### ##    ##  ######  |
-|##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ## |
-|##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##       |
-|##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####|
-|##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ## |
-|##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ## |
-| ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######  |
-|===============================================================|
-|You are not providing a signature key, which means the DFU     |
-|files will not be signed, and are vulnerable to tampering.     |
-|This is only compatible with a signature-less bootloader and is|
-|not suitable for production environments.                      |
-|===============================================================|
-
-Zip created at zephyr_dfu_pkg.zip
+wget https://developer.nordicsemi.com/nRF5_SDK/nRF5_SDK_v15.x.x/nRF5_SDK_15.2.0_9412b96.zip
+unzip nRF5_SDK_15.2.0_9412b96.zip
 ```
 
-パッケージはできた。
+nRF Connectで`examples/peripheral/blinky/hex/blinky_pca10059_mbr.hex`を書いてあげると動いた。
 
-書き込んでみよう
+MBRとアプリケーションだけが書かれているので、SoftDeviceはいらないみたい。
+SoftDeviceは、firmware。
 
 ```
-$ nrfutil dfu usb-serial -pkg zephyr_dfu_pkg.zip -p /dev/ttyACM0 -b 115200
-pc_ble_driver_py.exceptions.NordicSemiException: Extended Error 0x07: The array of supported SoftDevices for the update does not contain the FWID of the current SoftDevice.
+$ nrfutil  pkg generate --hw-version 52 --sd-req=0x00 --application blinky_pca10059_mbr.hex --application-version 1 pkg.zip
+$ nrfutil dfu usb-serial -pkg pkg.zip -p /dev/ttyACM0
+```
+
+OK！
+nRF52840 DongleのLEDのがチカチカするようになった。
+
+## nRF SDK Exampl self build
+
+プリビルドバイナリは動いたので、自分でコンパイルして、動かす。
+下のファイルにtoolchainのパスを書けばOK。
+
+`nRF5_SDK_15.2.0_9412b96/components/toolchain/gcc/Makefile.posix`
+
+```
+$ cat 
+/home/nakabayashi/others/03.connectFree/nrf-connect/nRF5_SDK_15.2.0_9412b96/components/toolchain/gcc/Makefile.posix
+GNU_INSTALL_ROOT ?= /home/nakabayashi/others/03.connectFree/nrf-connect/gnuarmemb/gcc-arm-none-eabi-8-2018-q4-major/bin/
+GNU_VERSION ?= 8.2.1
+GNU_PREFIX ?= arm-none-eabi
 ```
 
 ```
-  --sd-req TEXT                   The SoftDevice requirements. A comma-
-                                  separated list of SoftDevice firmware IDs (1
-                                  or more) of which one must be present on the
-                                  target device. Each item on the list must be
-                                  a two- or four-digit hex number prefixed
-                                  with "0x" (e.g. "0x12", "0x1234").
-                                  A non-
-                                  exhaustive list of well-known values to use
-                                  with this option follows:
-                                  |s112_nrf52_6.0.0|0xA7|
-                                  |s112_nrf52_6.1.0|0xB0|
-                                  |s130_nrf51_1.0.0|0x67|
-                                  |s130_nrf51_2.0.0|0x80|
-                                  |s132_nrf52_2.0.0|0x81|
-                                  |s130_nrf51_2.0.1|0x87|
-                                  |s132_nrf52_2.0.1|0x88|
-                                  |s132_nrf52_3.0.0|0x8C|
-                                  |s132_nrf52_3.1.0|0x91|
-                                  |s132_nrf52_4.0.0|0x95|
-                                  |s132_nrf52_4.0.2|0x98|
-                                  |s132_nrf52_4.0.3|0x99|
-                                  |s132_nrf52_4.0.4|0x9E|
-                                  |s132_nrf52_4.0.5|0x9F|
-                                  |s132_nrf52_5.0.0|0x9D|
-                                  |s132_nrf52_5.1.0|0xA5|
-                                  |s132_nrf52_6.0.0|0xA8|
-                                  |s132_nrf52_6.1.0|0xAF|
-                                  |s140_nrf52_6.0.0|0xA9|
-                                  |s140_nrf52_6.1.0|0xAE|  [required]
+cd <SDK_ROOT>/nRF5_SDK_15.2.0_9412b96/examples/peripheral/blinky/pca10059/mbr/armgcc
+$ make
+mkdir _build
+cd _build && mkdir nrf52840_xxaa
+Assembling file: gcc_startup_nrf52840.S
+Compiling file: main.c
+Compiling file: nrf_log_frontend.c
+Compiling file: nrf_log_str_formatter.c
+Compiling file: boards.c
+Compiling file: app_error.c
+Compiling file: app_error_handler_gcc.c
+Compiling file: app_error_weak.c
+Compiling file: app_util_platform.c
+Compiling file: nrf_assert.c
+Compiling file: nrf_atomic.c
+Compiling file: nrf_balloc.c
+Compiling file: nrf_fprintf.c
+Compiling file: nrf_fprintf_format.c
+Compiling file: nrf_memobj.c
+Compiling file: nrf_ringbuf.c
+Compiling file: nrf_strerror.c
+Compiling file: system_nrf52840.c
+Linking target: _build/nrf52840_xxaa.out
+   text	   data	    bss	    dec	    hex	filename
+   1708	    108	     28	   1844	    734	_build/nrf52840_xxaa.out
+Preparing: _build/nrf52840_xxaa.hex
+Preparing: _build/nrf52840_xxaa.bin
+DONE nrf52840_xxaa
 ```
 
-> SoftDevice Firmware ID: If one of the specified firmware IDs matches the ID of the current SoftDevice, the image is accepted. A firmware ID of 0x00 in the sd_req list means "The update does not depend on the SoftDevice". See section Updates without a SoftDevice for the implications of this.
-
-とりあえず0にしておけば良いらしい。
-
 ```
-$ nrfutil dfu usb-serial -pkg zephyr_dfu_pkg.zip -p /dev/ttyACM0 -b 115200  [####################################]  100%          
-Device programmed.
+$ cd _build
+$ nrfutil  pkg generate --hw-version 52 --sd-req=0x00 --application blinky_pca10059_mbr.hex --application-version 1 pkg.zip
+$ nrfutil dfu usb-serial -pkg pkg.zip -p /dev/ttyACM0
 ```
 
-きた！
+無事、プリビルドバイナリと同じ挙動になった。
 
-うんともすんとも。残念…。
-
-##### J-Link
-
-J-Linkソフトウェアが必要だ、とあるので、入れてみる。
-
-https://www.segger.com/downloads/jlink/JLink_Linux_x86_64.deb
-
-ライセンス同意が必要なので、コマンドラインだと入らないのか…。
+バイナリハックしてみる。
 
 ```
-$ sudo dpkg -i JLink_Linux_V640_x86_64.deb 
-Selecting previously unselected package jlink.
-(Reading database ... 227150 files and directories currently installed.)
-Preparing to unpack JLink_Linux_V640_x86_64.deb ...
-Removing /JLink ...
-/JLink not found (OK)
-Unpacking jlink (6.40) ...
-Setting up jlink (6.40) ...
+$ readelf -l nrf52840_xxaa.out
+
+Elf file type is EXEC (Executable file)
+Entry point 0x12b5
+There are 3 program headers, starting at offset 52
+
+Program Headers:
+  Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
+  EXIDX          0x0016a4 0x000016a4 0x000016a4 0x00008 0x00008 R   0x4
+  LOAD           0x000000 0x00000000 0x00000000 0x016ac 0x016ac R E 0x10000
+  LOAD           0x010008 0x20000008 0x000016ac 0x0006c 0x00088 RW  0x10000
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .ARM.exidx 
+   01     .text .ARM.exidx 
+   02     .data .bss
 ```
 
-## Blinky
+変な位置にエントリポイントがあるのは、MRBの4KBをスキップしているらしい。
+
+## Zephyr Blinky
 
 Blinky sample applicationならドングルでも動くらしい。
 
@@ -426,120 +406,21 @@ nrf52840_pca10059.dts_compiled: Warning (unique_unit_address): /soc/i2c@40004000
 -- Build files have been written to: /home/nakabayashi/others/03.connectFree/nrf-connect/srcs/ncs/zephyr/samples/basic/blinky/build
 ```
 
+ビルドできた。
+
 ```
 nrfutil pkg generate --hw-version 52 --sd-req=0x00 \
         --application zephyr.hex --application-version 1 pkg.zip
 nrfutil dfu usb_serial -pkg pkg.zip -p /dev/ttyACM0
 ```
 
-## nRF SDK example
-
-色々一足飛びすぎたので、SDKのサンプルを動かしてみる。
-
-```
-wget https://developer.nordicsemi.com/nRF5_SDK/nRF5_SDK_v15.x.x/nRF5_SDK_15.2.0_9412b96.zip
-unzip nRF5_SDK_15.2.0_9412b96.zip
-```
-
-nRF Connectで`examples/peripheral/blinky/hex/blinky_pca10059_mbr.hex`を書いてあげると動いた。
-
-MBRとアプリケーションだけが書かれているので、SoftDeviceはいらないみたい。
-SoftDeviceは、firmware。
-
-```
-$ nrfutil  pkg generate --hw-version 52 --sd-req=0x00 --application blinky_pca10059_mbr.hex --application-version 1 pkg.zip
-$ nrfutil dfu usb-serial -pkg pkg.zip -p /dev/ttyACM0
-```
-
-OK！
-Zephyrが動かないのは、何か足りないんだろうな。
-
-## nRF SDK Exampl self build
-
-下のファイルにtoolchainのパスを書けばOK。
-
-`nRF5_SDK_15.2.0_9412b96/components/toolchain/gcc/Makefile.posix`
-
-```
-$ cat 
-/home/nakabayashi/others/03.connectFree/nrf-connect/nRF5_SDK_15.2.0_9412b96/components/toolchain/gcc/Makefile.posix
-GNU_INSTALL_ROOT ?= /home/nakabayashi/others/03.connectFree/nrf-connect/gnuarmemb/gcc-arm-none-eabi-8-2018-q4-major/bin/
-GNU_VERSION ?= 8.2.1
-GNU_PREFIX ?= arm-none-eabi
-```
-
-```
-cd <SDK_ROOT>/nRF5_SDK_15.2.0_9412b96/examples/peripheral/blinky/pca10059/mbr/armgcc
-$ make
-mkdir _build
-cd _build && mkdir nrf52840_xxaa
-Assembling file: gcc_startup_nrf52840.S
-Compiling file: main.c
-Compiling file: nrf_log_frontend.c
-Compiling file: nrf_log_str_formatter.c
-Compiling file: boards.c
-Compiling file: app_error.c
-Compiling file: app_error_handler_gcc.c
-Compiling file: app_error_weak.c
-Compiling file: app_util_platform.c
-Compiling file: nrf_assert.c
-Compiling file: nrf_atomic.c
-Compiling file: nrf_balloc.c
-Compiling file: nrf_fprintf.c
-Compiling file: nrf_fprintf_format.c
-Compiling file: nrf_memobj.c
-Compiling file: nrf_ringbuf.c
-Compiling file: nrf_strerror.c
-Compiling file: system_nrf52840.c
-Linking target: _build/nrf52840_xxaa.out
-   text	   data	    bss	    dec	    hex	filename
-   1708	    108	     28	   1844	    734	_build/nrf52840_xxaa.out
-Preparing: _build/nrf52840_xxaa.hex
-Preparing: _build/nrf52840_xxaa.bin
-DONE nrf52840_xxaa
-```
-
-```
-$ cd _build
-$ nrfutil  pkg generate --hw-version 52 --sd-req=0x00 --application blinky_pca10059_mbr.hex --application-version 1 pkg.zip
-$ nrfutil dfu usb-serial -pkg pkg.zip -p /dev/ttyACM0
-```
-
-バイナリハックしてみる。
-
-```
-$ readelf -l nrf52840_xxaa.out
-
-Elf file type is EXEC (Executable file)
-Entry point 0x12b5
-There are 3 program headers, starting at offset 52
-
-Program Headers:
-  Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
-  EXIDX          0x0016a4 0x000016a4 0x000016a4 0x00008 0x00008 R   0x4
-  LOAD           0x000000 0x00000000 0x00000000 0x016ac 0x016ac R E 0x10000
-  LOAD           0x010008 0x20000008 0x000016ac 0x0006c 0x00088 RW  0x10000
-
- Section to Segment mapping:
-  Segment Sections...
-   00     .ARM.exidx 
-   01     .text .ARM.exidx 
-   02     .data .bss
-```
-
-変な位置にエントリポイントあるけど、そういうものかね？
+書き込むとうまく動かない。
 
 ## nRF Zephyr
 
-専用の手順があるのかな。
+動かない原因を解析する。
 
-[pca10059: add bootloader documentation](https://github.com/zephyrproject-rtos/zephyr/pull/11002)  
-[nRF52840 Dongle Programming Tutorial](https://devzone.nordicsemi.com/tutorials/b/getting-started/posts/nrf52840-dongle-programming-tutorial)
-
-動かぬ。
-
-随分とセクション情報が違うようだが？SDKを使わないから良いとか、そういうことかね？
-リセット時にPCが何になるか次第か。
+SDKのサンプルと、随分セクション情報が違う。
 
 ```
 $ readelf -l zephyr.elf
@@ -563,7 +444,7 @@ Program Headers:
    03     bss noinit
 ```
 
-PCを0x191dにしていそうだから、良い気がするが。
+PCを0x191dにしていそうだから、良い気がするが。vector_tableが0x0000から始まっている。
 
 ```
 00000000 <_vector_table>:
@@ -580,13 +461,11 @@ nRF SDKのreset vectorは0x1000から始まっているな。MBRを飛ばす形�
 012b5
 ```
 
-hexファイルが何か調べるか。
-objcopyの後にさらになんかやってるんだよな。
-
-[Intel Hex](https://ja.wikipedia.org/wiki/Intel_HEX)
+hexファイルは[Intel Hex](https://ja.wikipedia.org/wiki/Intel_HEX)形式。
 
 Zephyrのリンカスクリプトがずれている説？
-最終的に、`linker_pass_final.cmd`でリンクするみたい。
+最終的に、`linker_pass_final.cmd`でリンクするみたいだが、なぜか`linker.cmd`も修正しないと動くバイナリができない。
+これは追って調査が必要。
 
 `linker.cmd`と`linker_pass_final.cmd`を修正して、FLASHを`0x1000`から始めるようにしたらLEDが光った。
 
@@ -605,8 +484,6 @@ ENTRY("__start")
 SECTIONS
 ```
 
-これ、どこで見たんだっけな。
-
 ## references
 
 [datasheet](https://www.mouser.jp/datasheet/2/297/Nordic_06192018_PCA10059_Schematic_And_PCB-1372278.pdf)
@@ -620,20 +497,4 @@ SECTIONS
 
 ### メモ
 
-https://developer.nordicsemi.com/nRF_Connect_SDK/doc/0.3.0/nrf/gs_programming.html
-
-SDK、ここからダウンロードしないとだめ？
-
-```
-wget http://segger.com/downloads/embedded-studio/embeddedstudio_arm_nordic_linux_x64
-```
-
-別物くさいな。
-
-NRF52840用のZephyr定義ファイルはあるから、なんとかなると思うんだけどなー。
-
-https://docs.zephyrproject.org/latest/boards/arm/nrf52840_pca10059/doc/nrf52840_pca10059.html
-
-#### コマンドライン
-
-https://developer.nordicsemi.com/nRF_Connect_SDK/doc/0.3.0/zephyr/getting_started/getting_started.html#getting-started-run-sample
+Zephyrのメインラインでは、動作しない。Nordicのforkと何が違う？
