@@ -199,7 +199,7 @@ CONFIG_ETH_ENC28J60_0_SPI_CS_PIN=17
 
 ```
 mkdir build && cd build
-cmake -GNinja -DBOARD=nrf52840_pca10059 -DCONF_FILE="prj.conf overlay-enc28j60.conf" ..
+cmake -GNinja -DBOARD=nrf52840_pca10059 -DCONF_FILE="boards/nrf52840_pca10059.conf prj.conf overlay-enc28j60.conf" ..
 ninja run
 ```
 
