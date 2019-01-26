@@ -4,6 +4,26 @@ Zephyrのビルドプロセスを解析する。
 
 ## nRF52840 linker script
 
+Zephyrのデフォルトでビルドすると、下のリンカスクリプトになっている。
+
+```
+$ head -n 10 zephyr/linker.cmd
+ OUTPUT_FORMAT("elf32-littlearm")
+_region_min_align = 32;
+MEMORY
+    {
+    FLASH (rx) : ORIGIN = (0x0 + 0), LENGTH = (1024*1K - 0)
+    SRAM (wx) : ORIGIN = 0x20000000, LENGTH = (256 * 1K)
+    IDT_LIST (wx) : ORIGIN = (0x20000000 + (256 * 1K)), LENGTH = 2K
+    }
+ENTRY("__start")
+SECTIONS
+```
+
+nRF52840 donle (pca10059)のドキュメントを見ると、先頭4KBはMBRで書き換えしない、と書いてある。
+実際にこのリンカスクリプトを使ったバイナリは動作せず、FLASHのORIGINを4KB後ろにずらしてあげると動くようになる。
+今までは手動でリンカスクリプトを修正していたので、そうしなくてよいようにする。
+
 - ビルド時に自分が修正したリンカスクリプトを使うように修正する。
 
 ### nRF SDKのlinker script
