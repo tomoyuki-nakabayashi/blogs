@@ -1,5 +1,167 @@
 # Ethernet MAC controller
 
+## How to IPv6 ping
+
+### ピン配置
+
+#### UART
+
+USBシリアル変換ケーブルを使用。
+
+[Raspberry Pi ラズベリーパイ用の USB－TTLシリアルコンソールのUSB変換COMケーブルモジュールのケーブル](https://www.amazon.co.jp/GAOHOU-ESA854-Raspberry-%E3%83%A9%E3%82%BA%E3%83%99%E3%83%AA%E3%83%BC%E3%83%91%E3%82%A4%E7%94%A8%E3%81%AE-USB%EF%BC%8DTTL%E3%82%B7%E3%83%AA%E3%82%A2%E3%83%AB%E3%82%B3%E3%83%B3%E3%82%BD%E3%83%BC%E3%83%AB%E3%81%AEUSB%E5%A4%89%E6%8F%9BCOM%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB%E3%83%A2%E3%82%B8%E3%83%A5%E3%83%BC%E3%83%AB%E3%81%AE%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB/dp/B00K7YYFNM)
+
+| USB Serial  | nrf52840 dongle |
+| ----------- | --------------- |
+| RXD (White) | 0.20            |
+| TXD (Green) | 0.24            |
+| GND         | GND             |
+
+nRF52840から見た場合、0.20がTXD、0.24がRXDです。
+
+#### enc28j60
+
+| enc28j60 | nrf52840 dongle |
+| -------- | --------------- |
+| CK       | 1.00            |  
+| MOSI     | 0.13            |  
+| MISO     | 0.15            |  
+| CS       | 0.17            |  
+| INT      | 0.22            |
+
+### Zephyr
+
+#### 前準備
+
+##### Set up Zephyr
+
+[Zephyr Getting Started Guide](https://docs.zephyrproject.org/latest/getting_started/getting_started.html)に従って、ホスト上にビルド環境を構築します。
+
+LinuxでARMをターゲットにしていたので、次の通り設定しました。
+
+[GNU Arm Embedded Toolchain](https://developer.arm.com/open-source/gnu-toolchain/gnu-rm/downloads)をダウンロードして展開します。
+zephyrの設定ファイルに、ARMツールチェインの設定を書いておきます。例えば次ようになります。
+
+```
+$ cat ~/.zephyrrc
+export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb
+export GNUARMEMB_TOOLCHAIN_PATH="/home/tomoyuki/Build/arm-toolchain/gcc-arm-none-eabi-8-2018-q4-major"
+```
+
+##### Set up nrfutil / nRF Connect for Desktop
+
+nRF52840のFlashに書き込むためのツールを準備します。
+コマンドラインツールの`nrfutil`と、GUIで使える`nRF Connect for Desktop`があります。
+
+最初は`nRF Connect for Desktop`の方がとっつきやすいです。Macも対応しています。
+
+[nRF Connect for Desktop](https://www.nordicsemi.com/Software-and-Tools/Development-Tools/nRF-Connect-for-desktop)
+
+ツールを起動して、Programmerをインストールすると、hexファイルをGUIで書き込みできます。
+
+コマンドラインツールである`nrfutil`の方が細かいことができたり、手順を自動化できて便利です。
+pythonなので、多分Macでも動きます。PyPI経由でインストールしました。
+
+[Installing nrfutil](https://www.nordicsemi.com/DocLib/Content/User_Guides/nrfutil/latest/UG/nrfutil/nrfutil_installing)
+
+##### Set up USB Serial
+
+Macはよくわかりません。
+
+Linuxでは、USBシリアル変換ケーブルを挿すと、`/dev/ttyUSB*`が作成されるので、minicomで通信します。
+
+```
+sudo minicom -D /dev/ttyUSB0 -b 115200
+```
+
+#### ビルド
+
+上述のピン設定で動作するレポジトリを用意しています。
+
+```
+git clone https://github.com/tomoyuki-nakabayashi/fw-nrfconnect-zephyr.git
+cd fw-nrfconnect-zephyr
+git checkout pca10059
+```
+
+buildします。
+
+```
+# at zephyr root directory
+source zephyr-env.sh
+cd samples/net/ping_on_pca10059
+mkdir build && cd build
+cmake -GNinja -DBOARD=nrf52840_pca10059 -DCONF_FILE="prj.conf overlay-enc28j60.conf" ..
+ninja
+```
+
+#### Flash書き込み
+
+Flashに書き込みます。
+nRF52840 dongleを挿入し、赤いLEDがblinkしていることを確認します。
+
+terminalをもう1つ開いておき、USB Serialと接続しておきます。
+
+```
+nrfutil  pkg generate --hw-version 52 --sd-req=0x00 --application zephyr/zephyr.hex --application-version 1 pkg.zip
+nrfutil dfu usb-serial -pkg pkg.zip -p /dev/ttyACM0
+```
+
+無事に起動すると、下のメッセージが表示されます。
+
+```
+# another terminal
+***** Booting Zephyr OS v1.13.99-ncs2 *****
+uart:~$
+```
+
+#### ping
+
+ネットワークインタフェースを確認します。IPv6のアドレスが割り振られていることがわかります。
+
+```
+uart:~$ net iface show
+
+Interface 0x2000caa0 (Ethernet) [0]
+===================================
+Link addr : 00:04:A3:2D:30:36
+MTU       : 1500
+Ethernet capabilities supported:
+        10 Mbits
+IPv6 unicast addresses (max 3):
+        fe80::204:a3ff:fe2d:3036 autoconf preferred infinite
+IPv6 multicast addresses (max 4):
+        <none>
+IPv6 prefixes (max 2):
+        <none>
+```
+
+対向ホストにpingします。
+
+```
+$ net ping fe80::5df7:8143:d8eb:84aa
+Sent a ping to fe80::5df7:8143:d8eb:84aa
+Received echo reply from fe80::5df7:8143:d8eb:84aa to fe80::204:a3ff:fe2d:3036
+```
+
+ホストからpingします。
+
+```
+$ ping6 -I enp0s9 fe80::204:a3ff:fe2d:3036
+PING fe80::204:a3ff:fe2d:3036(fe80::204:a3ff:fe2d:3036) from fe80::5df7:8143:d8eb:84aa enp0s9: 56 data bytes
+64 bytes from fe80::204:a3ff:fe2d:3036: icmp_seq=1 ttl=64 time=24.3 ms
+64 bytes from fe80::204:a3ff:fe2d:3036: icmp_seq=2 ttl=64 time=24.3 ms
+64 bytes from fe80::204:a3ff:fe2d:3036: icmp_seq=3 ttl=64 time=24.6 ms
+64 bytes from fe80::204:a3ff:fe2d:3036: icmp_seq=4 ttl=64 time=24.2 ms
+```
+
+### 既知の問題
+
+nRF52840を再起動すると、ネットワークが疎通しない。
+おそらく、Zephyrが正しく再起動されていない。
+
+Zephyr起動時は、`***** Booting Zephyr OS v1.13.99-ncs2 *****`のメッセージが表示されるが、nRF52840 dongleをUSBから抜き差ししても、このメッセージが表示されない。
+なんらかをFlash領域に書き込んでしまっている？
+
 ## Zephyr driver
 
 `zephyr/drivers/ethernet/enc28j60.c`にdriverがある。
