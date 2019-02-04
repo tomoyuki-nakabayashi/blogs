@@ -405,22 +405,22 @@ srcディレクトリ下のファイルで、トップ (`main.rs`か`lib.rs`) �
 
 `.cargo/config`に様々な設定を記述することができます。組込みRustでは非常にお世話になります。
 
-例えば、Cortex-M4F向けのクロスコンパイラを使用し、カスタムリンカスクリプトを指定、実行時にはarm-gdbを立ち上げるようにします。
+例えば、RISC-V向けのクロスコンパイラを使用し、カスタムリンカスクリプトを指定、実行時にはqemu-riscvを立ち上げるようにします。
 これは、`.cargo/config`に次のように記述するだけです (ツールのインストールは別途必要です)。
 
 ```toml
-# thumbv7em-none-eabihfをターゲットにしたときの設定です
-[target.thumbv7em-none-eabihf]
-# `cargo run`した時のランナーを指定します。
-runner = "arm-none-eabi-gdb -q -x openocd.gdb"
-# Rustコンパイラにリンカスクリプトを指定します。
+# ビルドターゲットがRISC-Vの時の設定です
+[target.riscv32imac-unknown-none-elf]
+# ランナーとしてqemu-riscvを使います
+runner = "qemu-system-riscv32 -nographic -machine sifive_u -kernel"
+# 自作のリンカスクリプトでリンクします
 rustflags = [
-  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-Tlinker.ld",
 ]
 
-# デフォルトで`thumbv7em-none-eabihf`のクロスコンパイルを実行します。
+# デフォルトでRISC-Vをビルドターゲットにします
 [build]
-target = "thumbv7em-none-eabihf"
+target = "riscv32imac-unknown-none-elf"
 ```
 
 このように設定ファイルを用意すると、
@@ -429,32 +429,61 @@ target = "thumbv7em-none-eabihf"
 cargo run
 ```
 
-だけで、ARMのバイナリが生成され、arm-gdb経由でバイナリを実行します。
-
-詳しくは、[Rust Discovery](https://docs.rust-embedded.org/discovery/)を参照下さい。
+だけで、RISC-Vのバイナリが生成され、qemuでバイナリを実行します。
 
 ### build script
 
 ビルド時にRustで記述したビルドスクリプトを実行することができます。
-例えば、依存するC言語のライブラリをビルドした上で、Rustのコードをビルドすることができます。
+例えば、依存するC言語のライブラリをビルドしたり、アセンブリで書いたブートストラップをビルドした上で、Rustのコードをビルドすることができます。
 
 `cc` crateを使うと、非常に容易です。
 
 ```rust
 extern crate cc;
 
-fn main() {
-    cc::Build::new()
-        .file("foo.c")
-        .compile("libfoo.a");
+fn main() -> Result<(), Box<Error>> {
+    Build::new()
+        .file("boot.s")
+        .flag("-mabi=ilp32")
+        .compile("asm");
+
+    Ok(())
 }
 ```
 
-これで、`foo.c`をコンパイルして、Rustのコードとリンクしてくれます。
+これで、`boot.s`をコンパイルして、Rustのコードとリンクしてくれます。
 ただし、クロスコンパイラを使う場合は、環境変数の設定が必要です。
+
+```
+$ env CC=riscv32-unknown-linux-gnu-gcc  cargo run
+```
+
+### external tools
+
+cargoはプラグインシステムがあるため、サブコマンドを自由に作ることができます。
+組込みで一番有用なのは間違いなく`binutils`でしょう。
+
+次のコマンドでプラグインをインストールするだけで、cargoのサブコマンドとして`binutils`が利用可能です。
+
+```
+$ rustup component add llvm-tools-preview
+$ cargo install cargo-binutils --vers 0.1.4
+```
+
+下のような感じで使うことができます。
+
+```
+$ cargo objdump --bin app -- -d -no-show-raw-insn
+```
 
 ## LLVM
 
+RustはLLVMをバックエンドに持つプログラミング言語であるため、クロスコンパイルがお手軽です。
+ARMv7のクロスコンパイラをインストールするのは、コマンド1つです。
+
+```
+$ rustup target add thumbv7m-none-eabi
+```
 
 ## コミュニティ
 
