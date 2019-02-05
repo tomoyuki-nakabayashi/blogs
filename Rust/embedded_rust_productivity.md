@@ -460,6 +460,8 @@ $ env CC=riscv32-unknown-linux-gnu-gcc  cargo run
 
 ### external tools
 
+#### binutils
+
 cargoはプラグインシステムがあるため、サブコマンドを自由に作ることができます。
 組込みで一番有用なのは間違いなく`binutils`でしょう。
 
@@ -476,6 +478,15 @@ $ cargo install cargo-binutils --vers 0.1.4
 $ cargo objdump --bin app -- -d -no-show-raw-insn
 ```
 
+#### フォーマッタ、lintツール
+
+Rustのフォーマッタや、ソースコードを静的解析するlintツールもCargoのサブコマンドとして使うことができます。
+
+```
+cargo fmt
+cargo clippy
+```
+
 ## LLVM
 
 RustはLLVMをバックエンドに持つプログラミング言語であるため、クロスコンパイルがお手軽です。
@@ -485,5 +496,21 @@ ARMv7のクロスコンパイラをインストールするのは、コマンド
 $ rustup target add thumbv7m-none-eabi
 ```
 
-## コミュニティ
+## Rust Embedded WG
 
+Rustの開発はコミュニティが行っています。
+注力分野として組込みも挙げられており、[Embedded WG](https://github.com/rust-embedded/wg)があります。
+
+このEmbedded WGは、組込み開発で使用するcrateを開発したり、学習用ドキュメントを整備しています。
+また、Rust本体に組込みで欲しい機能を要望するブリッジとしての役割も担っています。
+
+下のようなターゲットに、注力しています。
+
+- Cortex-A
+- Cortex-M
+- Cortex-R
+- MSP430
+- RISC-V
+- 組込みLinux
+
+また、[SVD (System View Description)](https://github.com/posborne/cmsis-svd)ファイルから、マイコンのペリフェラルにアクセスするRustコードを自動生成する、[svd2rust](https://github.com/rust-embedded/svd2rust)のようなツール開発も行われています。
